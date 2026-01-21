@@ -9,6 +9,7 @@ from werkzeug.utils import secure_filename
 from datetime import datetime
 import json
 import logging
+import gc
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -21,7 +22,7 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'your-secret-key-change-in-production')
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['OUTPUT_FOLDER'] = 'outputs'
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
+app.config['MAX_CONTENT_LENGTH'] = 5 * 1024 * 1024  # 5MB max file size (optimized for free tier)
 app.config['ALLOWED_EXTENSIONS'] = {'pdf'}
 
 # Ensure folders exist
@@ -91,7 +92,10 @@ def upload_files():
         # Clean up uploaded files
         for path in uploaded_paths:
             os.remove(path)
-        
+
+        # Force garbage collection to free memory
+        gc.collect()
+
         # Store results in session-like manner (simplified for demo)
         with open(os.path.join(app.config['OUTPUT_FOLDER'], f'results_{timestamp}.json'), 'w') as f:
             json.dump({
