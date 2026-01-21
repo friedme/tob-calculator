@@ -8,6 +8,11 @@ import os
 from werkzeug.utils import secure_filename
 from datetime import datetime
 import json
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Import our calculation modules
 from tob_calculator import process_statements, generate_excel, generate_csv, generate_pdf
@@ -59,8 +64,10 @@ def upload_files():
         return redirect(url_for('index'))
     
     try:
+        logger.info(f"Processing {len(uploaded_paths)} PDF files")
         # Process statements and calculate TOB
         results = process_statements(uploaded_paths)
+        logger.info(f"Successfully extracted {len(results.get('transactions', []))} transactions")
 
         # Check if any transactions were extracted
         if not results['transactions'] or len(results['transactions']) == 0:
@@ -101,6 +108,7 @@ def upload_files():
         return redirect(url_for('results', timestamp=timestamp))
     
     except Exception as e:
+        logger.error(f"Error processing statements: {str(e)}", exc_info=True)
         flash(f'Error processing statements: {str(e)}', 'error')
         # Clean up uploaded files on error
         for path in uploaded_paths:
