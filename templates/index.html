@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div style="max-width: 800px; margin: 0 auto;">
+    <h2 style="margin-bottom: 20px; color: #366092;">Upload Broker Statements</h2>
+    
+    <div class="info-box">
+        <h3>📋 Supported Brokers</h3>
+        <ul style="margin-left: 20px; margin-top: 10px;">
+            <li><strong>Interactive Brokers</strong> - English statements</li>
+            <li><strong>Saxo Bank</strong> - Dutch/Flemish statements</li>
+        </ul>
+    </div>
+    
+    <form action="{{ url_for('upload_files') }}" method="POST" enctype="multipart/form-data" id="uploadForm">
+        <div class="upload-zone" id="dropZone">
+            <div class="upload-icon">📄</div>
+            <h3 style="margin-bottom: 10px;">Drop PDF files here or click to browse</h3>
+            <p style="color: #666; margin-bottom: 20px;">Upload one or more broker statements (PDF format)</p>
+            <input type="file" name="pdfs" id="fileInput" multiple accept=".pdf">
+            <label for="fileInput" class="btn">Choose Files</label>
+        </div>
+
+        <div style="text-align: center; margin-top: 30px;">
+            <button type="submit" class="btn" id="submitBtn" disabled>
+                Calculate TOB Tax
+            </button>
+        </div>
+
+        <div class="file-list" id="fileList" style="display: none; margin-top: 30px;">
+            <h3 style="margin-bottom: 10px;">Selected Files:</h3>
+            <div id="fileItems"></div>
+        </div>
+    </form>
+    
+    <div class="info-box" style="margin-top: 40px;">
+        <h3>ℹ️ How It Works</h3>
+        <ol style="margin-left: 20px; margin-top: 10px; line-height: 2;">
+            <li>Upload your broker PDF statements</li>
+            <li>System extracts all stock transactions</li>
+            <li>Fetches official ECB exchange rates</li>
+            <li>Calculates TOB at 0.35% on EUR amounts</li>
+            <li>Download Excel and PDF summary files</li>
+        </ol>
+    </div>
+    
+    <div class="info-box" style="margin-top: 20px; background: #fff3cd; border-left-color: #ffc107;">
+        <h3 style="color: #856404;">⚠️ Important Notes</h3>
+        <ul style="margin-left: 20px; margin-top: 10px;">
+            <li>Same-side transactions (multiple buys or sells) are automatically grouped</li>
+            <li>Day trades: Both buy and sell sides are taxed separately</li>
+            <li>Maximum file size: 16 MB per file</li>
+            <li>Files are processed securely and deleted after calculation</li>
+        </ul>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const dropZone = document.getElementById('dropZone');
+    const fileInput = document.getElementById('fileInput');
+    const fileList = document.getElementById('fileList');
+    const fileItems = document.getElementById('fileItems');
+    const submitBtn = document.getElementById('submitBtn');
+    
+    // Prevent default drag behaviors
+    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+        dropZone.addEventListener(eventName, preventDefaults, false);
+        document.body.addEventListener(eventName, preventDefaults, false);
+    });
+    
+    function preventDefaults(e) {
+        e.preventDefault();
+        e.stopPropagation();
+    }
+    
+    // Highlight drop zone when dragging over
+    ['dragenter', 'dragover'].forEach(eventName => {
+        dropZone.addEventListener(eventName, () => {
+            dropZone.classList.add('dragover');
+        }, false);
+    });
+    
+    ['dragleave', 'drop'].forEach(eventName => {
+        dropZone.addEventListener(eventName, () => {
+            dropZone.classList.remove('dragover');
+        }, false);
+    });
+    
+    // Handle dropped files
+    dropZone.addEventListener('drop', (e) => {
+        const dt = e.dataTransfer;
+        const files = dt.files;
+        fileInput.files = files;
+        handleFiles(files);
+    });
+    
+    // Handle file input change
+    fileInput.addEventListener('change', (e) => {
+        handleFiles(e.target.files);
+    });
+    
+    function handleFiles(files) {
+        if (files.length === 0) {
+            fileList.style.display = 'none';
+            submitBtn.disabled = true;
+            return;
+        }
+        
+        fileList.style.display = 'block';
+        fileItems.innerHTML = '';
+        
+        Array.from(files).forEach(file => {
+            const fileItem = document.createElement('div');
+            fileItem.className = 'file-item';
+            fileItem.innerHTML = `
+                <span>📄 ${file.name}</span>
+                <span style="color: #666;">${(file.size / 1024).toFixed(1)} KB</span>
+            `;
+            fileItems.appendChild(fileItem);
+        });
+        
+        submitBtn.disabled = false;
+    }
+    
+    // Click to browse
+    dropZone.addEventListener('click', () => {
+        fileInput.click();
+    });
+</script>
+{% endblock %}

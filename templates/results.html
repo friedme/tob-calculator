@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div style="max-width: 1000px; margin: 0 auto;">
+    <h2 style="margin-bottom: 30px; color: #366092; text-align: center;">✅ TOB Tax Calculation Complete</h2>
+    
+    <div class="stats-grid">
+        <div class="stat-card">
+            <h3>{{ results.total_transactions }}</h3>
+            <p>Transactions</p>
+        </div>
+        <div class="stat-card">
+            <h3>€{{ "{:,.2f}".format(results.total_eur).replace(',', 'TEMP').replace('.', ',').replace('TEMP', '.') }}</h3>
+            <p>Total EUR Amount</p>
+        </div>
+        <div class="stat-card">
+            <h3>€{{ "{:,.2f}".format(results.total_tob).replace(',', 'TEMP').replace('.', ',').replace('TEMP', '.') }}</h3>
+            <p>Total TOB Tax</p>
+        </div>
+    </div>
+    
+    <div class="info-box">
+        <h3>📊 Calculation Details</h3>
+        <p style="margin-top: 10px;">
+            Your statements have been processed successfully. All transactions were extracted, 
+            converted to EUR using official ECB exchange rates, and TOB tax was calculated at 0.35%.
+        </p>
+    </div>
+    
+    <h3 style="margin: 30px 0 15px; color: #366092;">📋 Transaction Details</h3>
+    
+    <div style="overflow-x: auto;">
+        <table>
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Broker</th>
+                    <th>Stock</th>
+                    <th>Type</th>
+                    <th style="text-align: right;">Shares</th>
+                    <th>Currency</th>
+                    <th style="text-align: right;">Amount</th>
+                    <th style="text-align: right;">ECB Rate</th>
+                    <th style="text-align: right;">EUR Amount</th>
+                    <th style="text-align: right;">TOB (0.35%)</th>
+                </tr>
+            </thead>
+            <tbody id="transactionTableBody">
+                <tr>
+                    <td colspan="10" style="text-align: center; padding: 20px; color: #666;">
+                        Loading transactions...
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+    
+    <h3 style="margin: 30px 0 15px; color: #366092;">Download Your Reports</h3>
+    
+    <div class="download-buttons">
+        <a href="{{ url_for('download', timestamp=timestamp, filetype='excel') }}" class="btn">
+            📊 Download Excel (.xlsx)
+        </a>
+        <a href="{{ url_for('download', timestamp=timestamp, filetype='pdf') }}" class="btn" style="background: #28a745;">
+            📄 Download PDF Summary (For Tax Filing)
+        </a>
+    </div>
+
+    <div class="info-box" style="margin-top: 30px; background: #d1ecf1; border-left-color: #0c5460;">
+        <h3 style="color: #0c5460;">📋 What's Included</h3>
+        <ul style="margin-left: 20px; margin-top: 10px;">
+            <li><strong>Excel file:</strong> Professional formatted report with all calculations for your records</li>
+            <li><strong>PDF Summary:</strong> Official-looking report ready to attach to your tax filing as documentation/proof</li>
+        </ul>
+    </div>
+
+    <div class="info-box" style="margin-top: 20px; background: #fff3cd; border-left-color: #ffc107;">
+        <h3 style="color: #856404;">💡 Next Steps</h3>
+        <ul style="margin-left: 20px; margin-top: 10px;">
+            <li><strong>Review the Excel file</strong> for detailed transaction breakdown</li>
+            <li><strong>Attach the PDF to your tax filing</strong> as official documentation</li>
+            <li>Keep both files for your tax records</li>
+            <li>Verify the total TOB amount matches your expectations</li>
+        </ul>
+    </div>
+    
+    <div style="text-align: center; margin-top: 40px;">
+        <a href="{{ url_for('index') }}" class="btn btn-secondary">
+            ← Process More Statements
+        </a>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Load transaction details
+    fetch('/api/transaction-details/{{ timestamp }}')
+        .then(response => response.json())
+        .then(data => {
+            const tbody = document.getElementById('transactionTableBody');
+            
+            if (data.transactions && data.transactions.length > 0) {
+                tbody.innerHTML = '';
+                
+                data.transactions.forEach(t => {
+                    const row = document.createElement('tr');
+                    row.innerHTML = `
+                        <td>${t.date}</td>
+                        <td>${t.broker}</td>
+                        <td style="font-weight: 500;">${t.stock}</td>
+                        <td><span style="padding: 4px 8px; border-radius: 4px; font-size: 0.9em; ${t.type === 'Buy' ? 'background: #d4edda; color: #155724;' : 'background: #f8d7da; color: #721c24;'}">${t.type}</span></td>
+                        <td style="text-align: right;">${formatNumber(t.shares)}</td>
+                        <td style="text-align: center; font-weight: 500;">${t.currency}</td>
+                        <td style="text-align: right;">${formatNumber(t.amount)}</td>
+                        <td style="text-align: right;">${t.rate.toFixed(4)}</td>
+                        <td style="text-align: right; font-weight: 500;">€${formatNumber(t.eur_amount)}</td>
+                        <td style="text-align: right; font-weight: 600; color: #366092;">€${formatNumber(t.tob)}</td>
+                    `;
+                    tbody.appendChild(row);
+                });
+                
+                // Add total row
+                const totalRow = document.createElement('tr');
+                totalRow.style.background = '#f8f9fa';
+                totalRow.style.fontWeight = 'bold';
+                totalRow.innerHTML = `
+                    <td colspan="8" style="text-align: right; padding-right: 20px;">TOTAL:</td>
+                    <td style="text-align: right;">€${formatNumber(data.total_eur)}</td>
+                    <td style="text-align: right; color: #366092;">€${formatNumber(data.total_tob)}</td>
+                `;
+                tbody.appendChild(totalRow);
+            } else {
+                tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; padding: 20px; color: #999;">No transactions found</td></tr>';
+            }
+        })
+        .catch(error => {
+            console.error('Error loading transactions:', error);
+            document.getElementById('transactionTableBody').innerHTML = 
+                '<tr><td colspan="10" style="text-align: center; padding: 20px; color: #c33;">Error loading transaction details</td></tr>';
+        });
+    
+    function formatNumber(num) {
+        // Belgian format: comma as decimal separator, dot as thousands separator
+        return num.toLocaleString('nl-BE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+</script>
+{% endblock %}

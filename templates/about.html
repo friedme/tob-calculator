@@ -1,0 +1,175 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div style="max-width: 900px; margin: 0 auto;">
+    <h2 style="margin-bottom: 20px; color: #366092;">About This Calculator</h2>
+    
+    <div class="info-box">
+        <h3>🇧🇪 What is Belgian TOB Tax?</h3>
+        <p style="margin-top: 10px; line-height: 1.8;">
+            The Tax on Stock Exchange Transactions (Taks op de beursverrichtingen / Taxe sur les opérations de bourse) 
+            is a Belgian tax levied on the purchase and sale of securities. The standard rate for shares is <strong>0.35%</strong> 
+            of the transaction amount, with a maximum of €1,600 per transaction.
+        </p>
+    </div>
+    
+    <h3 style="margin: 30px 0 15px; color: #366092;">📊 How This Calculator Works</h3>
+    
+    <div class="info-box">
+        <h3>1. PDF Extraction</h3>
+        <p style="margin-top: 10px;">
+            The system automatically detects your broker (Interactive Brokers or Saxo Bank) and extracts 
+            all stock transactions from your PDF statements. It identifies:
+        </p>
+        <ul style="margin-left: 20px; margin-top: 10px;">
+            <li>Transaction dates</li>
+            <li>Stock symbols</li>
+            <li>Buy/Sell type</li>
+            <li>Number of shares</li>
+            <li>Transaction amounts</li>
+            <li>Currencies</li>
+        </ul>
+    </div>
+    
+    <div class="info-box">
+        <h3>2. Transaction Grouping</h3>
+        <p style="margin-top: 10px;">
+            <strong>Same-side transactions are grouped:</strong> Multiple purchases or sales of the same stock 
+            on the same day are combined into a single transaction.
+        </p>
+        <p style="margin-top: 10px;">
+            <strong>Day trades remain separate:</strong> If you buy AND sell the same stock on the same day, 
+            both transactions are kept separate because Belgian law taxes both sides of a day trade.
+        </p>
+    </div>
+    
+    <div class="info-box">
+        <h3>3. Currency Conversion</h3>
+        <p style="margin-top: 10px;">
+            All foreign currency amounts are converted to EUR using official <strong>European Central Bank (ECB)</strong>
+            reference rates for each transaction date.
+        </p>
+        <p style="margin-top: 10px;">
+            This applies to both Interactive Brokers and Saxo Bank statements. The calculator automatically detects the
+            transaction currency and applies the appropriate ECB exchange rate for that date.
+        </p>
+    </div>
+    
+    <div class="info-box">
+        <h3>4. TOB Calculation</h3>
+        <p style="margin-top: 10px;">
+            TOB is calculated as: <strong>EUR Amount × 0.35%</strong>
+        </p>
+        <p style="margin-top: 10px;">
+            The maximum TOB per transaction is €1,600 (for transactions above €457,143).
+        </p>
+    </div>
+    
+    <h3 style="margin: 30px 0 15px; color: #366092;">🔧 Technical Details</h3>
+    
+    <div class="info-box">
+        <h3>Supported Brokers</h3>
+        <table style="margin-top: 10px;">
+            <tr>
+                <th>Broker</th>
+                <th>Statement Language</th>
+                <th>Currency Handling</th>
+            </tr>
+            <tr>
+                <td><strong>Interactive Brokers</strong></td>
+                <td>English</td>
+                <td>Converts using ECB rates</td>
+            </tr>
+            <tr>
+                <td><strong>Saxo Bank</strong></td>
+                <td>Dutch/Flemish</td>
+                <td>Converts using ECB rates</td>
+            </tr>
+        </table>
+    </div>
+
+    <div class="info-box" style="background: #e7f3ff; border-left-color: #366092;">
+        <h3>📥 How to Download Interactive Brokers Statements</h3>
+        <p style="margin-top: 10px; line-height: 1.8;">
+            To get the correct statement format for this calculator:
+        </p>
+        <ol style="margin-left: 20px; margin-top: 10px; line-height: 2;">
+            <li>Log in to your Interactive Brokers account</li>
+            <li>Navigate to <strong>Performance & Reports</strong> → <strong>Statements</strong></li>
+            <li>Select <strong>Activity Statement</strong> (can be for a full month or custom period)</li>
+            <li>Choose PDF format and download</li>
+        </ol>
+        <p style="margin-top: 10px; color: #666; font-style: italic;">
+            Note: Activity Statements work best. Other statements that include "Trades" sections may also work.
+        </p>
+    </div>
+
+    <div class="info-box" style="background: #e7f3ff; border-left-color: #366092;">
+        <h3>📥 How to Download Saxo Bank Statements</h3>
+        <p style="margin-top: 10px; line-height: 1.8;">
+            To get the correct statement format for this calculator:
+        </p>
+        <ol style="margin-left: 20px; margin-top: 10px; line-height: 2;">
+            <li>Log in to your Saxo Bank account</li>
+            <li>Navigate to <strong>Rekeningoverzichten</strong> (Account Statements)</li>
+            <li>Click on <strong>Overzichten Downloaden</strong> (Download Statements)</li>
+            <li>Select <strong>Transactie- en saldorapport</strong> (Transaction and Balance Report)</li>
+            <li>Choose your date range and download as PDF</li>
+        </ol>
+        <p style="margin-top: 10px; color: #666; font-style: italic;">
+            Note: Make sure to select "Transactie- en saldorapport" and not other report types, as the calculator is specifically designed for this format.
+        </p>
+    </div>
+    
+    <div class="info-box">
+        <h3>Exchange Rate Source</h3>
+        <p style="margin-top: 10px;">
+            Official ECB rates from: 
+            <a href="https://www.ecb.europa.eu/stats/eurofxref/eurofxref-hist.xml" target="_blank" style="color: #366092;">
+                ECB Euro Foreign Exchange Reference Rates
+            </a>
+        </p>
+        <p style="margin-top: 10px;">
+            Rates are fetched fresh for each calculation to ensure accuracy.
+        </p>
+    </div>
+    
+    <div class="info-box">
+        <h3>Output Formats</h3>
+        <ul style="margin-left: 20px; margin-top: 10px;">
+            <li><strong>Excel (.xlsx):</strong> Professional formatted spreadsheet with styling and formulas</li>
+            <li><strong>CSV (Belgian format):</strong> Semicolon separators, comma decimals (ready for Belgian accounting software)</li>
+            <li><strong>Markdown (.md):</strong> Human-readable summary with complete methodology</li>
+        </ul>
+    </div>
+    
+    <h3 style="margin: 30px 0 15px; color: #366092;">⚠️ Important Disclaimers</h3>
+    
+    <div class="info-box" style="background: #fff3cd; border-left-color: #ffc107;">
+        <ul style="margin-left: 20px;">
+            <li>This tool is for <strong>informational purposes only</strong></li>
+            <li>Always verify calculations with a qualified tax professional</li>
+            <li>The developer is not responsible for any tax filing errors</li>
+            <li>Belgian tax laws may change - ensure you're using current regulations</li>
+            <li>Special cases (derivatives, bonds, etc.) may have different rates</li>
+        </ul>
+    </div>
+    
+    <h3 style="margin: 30px 0 15px; color: #366092;">🔒 Privacy & Security</h3>
+    
+    <div class="info-box" style="background: #d1ecf1; border-left-color: #0c5460;">
+        <ul style="margin-left: 20px;">
+            <li>Uploaded files are processed locally and <strong>immediately deleted</strong> after calculation</li>
+            <li>No data is stored on any server</li>
+            <li>ECB rates are fetched via HTTPS</li>
+            <li>All processing happens in-memory</li>
+        </ul>
+    </div>
+    
+    <div style="text-align: center; margin-top: 40px;">
+        <a href="{{ url_for('index') }}" class="btn">
+            ← Back to Calculator
+        </a>
+    </div>
+</div>
+{% endblock %}

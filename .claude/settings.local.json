@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip --version:*)",
+      "Bash(pip3:*)",
+      "Bash(python -m pip:*)",
+      "Bash(python app.py:*)",
+      "Bash(python debug_ib_extraction.py:*)",
+      "Bash(python debug_saxo_extraction.py:*)",
+      "Bash(python debug_saxo_amounts.py:*)",
+      "Bash(python debug_saxo_amounts2.py:*)",
+      "Bash(python debug_9225.py:*)",
+      "Bash(python:*)",
+      "Bash(curl:*)",
+      "Bash(timeout:*)",
+      "Bash(where:*)",
+      "Bash(winget install:*)",
+      "Bash(git init:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
+    ]
+  }
+}
