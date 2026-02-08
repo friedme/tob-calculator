@@ -1,0 +1,188 @@
+BELGIAN TOB TAX CALCULATOR - PACKAGE CONTENTS
+==============================================
+
+Version: 2.0
+Date: January 22, 2026
+Platform: Windows 10/11 (Primary), macOS/Linux (Manual startup)
+
+CORE FILES
+----------
+✓ app.py                        - Main Flask web application (545 lines)
+✓ tob_core.py                   - PDF extraction and TOB calculation logic
+✓ tob_outputs.py                - Excel, CSV, PDF, Markdown generation
+✓ requirements.txt              - Python dependencies
+
+STARTUP SCRIPTS (Windows)
+--------------------------
+✓ START_TOB_CALCULATOR.bat      - Main startup script (visible console)
+✓ QUICK_START.vbs               - Silent startup (no console window)
+✓ STOP_TOB_CALCULATOR.bat       - Shutdown script
+
+HTML TEMPLATES
+--------------
+✓ templates/base.html           - Base template with navigation
+✓ templates/index.html          - Upload page with drag-and-drop
+✓ templates/results.html        - Results display with download buttons
+✓ templates/about.html          - Info page with methodology
+✓ templates/404.html            - Custom error page
+
+DOCUMENTATION
+-------------
+✓ README.md                     - Comprehensive user guide (400+ lines)
+✓ INSTALLATION.md               - Installation instructions
+✓ DEPLOYMENT_CHECKLIST.md       - Developer deployment guide
+✓ PACKAGE_CONTENTS.txt          - This file
+
+CONFIGURATION
+-------------
+✓ .gitignore                    - Version control exclusions
+
+FOLDERS
+-------
+✓ uploads/                      - Temporary PDF storage (auto-cleaned)
+✓ outputs/                      - Generated result files
+  ├── .gitkeep                  - Placeholder for empty folders
+
+FEATURES
+--------
+✓ Drag-and-drop PDF upload
+✓ Multi-file processing (batch upload)
+✓ Broker detection (Interactive Brokers, Saxo Bank)
+✓ PDF extraction with pdfplumber
+✓ ECB exchange rate fetching (real-time)
+✓ Transaction grouping (same-side consolidation)
+✓ Day trade handling (both sides taxed)
+✓ Multiple output formats:
+  - Excel (.xlsx) with professional formatting
+  - CSV (Belgian format: ; separator, , decimals)
+  - PDF (printable report)
+  - Markdown (text summary)
+✓ Belgian number formatting throughout
+✓ Comprehensive error handling
+✓ System diagnostics page
+✓ About page with methodology
+
+SUPPORTED BROKERS
+-----------------
+1. Interactive Brokers
+   - Statement: Activity Statement (English)
+   - Currencies: USD, GBP, EUR, CAD, AUD, JPY, SEK, CHF
+   - Features: Auto commission exclusion, Japanese stocks
+
+2. Saxo Bank
+   - Statement: Transactie- en saldorapport (Dutch/Flemish)
+   - Accounts: EUR and USD
+   - Features: Multi-account support, cash filtering
+
+DEPENDENCIES (Auto-installed)
+------------------------------
+- Flask 3.0.0              - Web framework
+- Werkzeug 3.0.1           - WSGI utilities
+- openpyxl 3.1.2           - Excel file generation
+- pdfplumber 0.11.0        - PDF reading/extraction
+- reportlab 4.0.7          - PDF generation
+- requests 2.31.0          - HTTP library (ECB API)
+
+SYSTEM REQUIREMENTS
+-------------------
+- Python 3.8 or later
+- Windows 10/11 (recommended)
+- Internet connection (for ECB rates)
+- 100MB free disk space
+- Modern web browser (Chrome, Firefox, Edge)
+
+FILE SIZES (Approximate)
+------------------------
+Total package (excl. venv): ~200 KB
+After dependency install: ~150 MB (includes venv)
+
+DEPLOYMENT STEPS
+----------------
+1. Extract tob_calculator.zip to desired location
+2. Double-click START_TOB_CALCULATOR.bat
+3. Wait for dependency installation (first run only)
+4. Browser opens automatically at http://localhost:5000
+5. Upload broker PDFs and calculate TOB
+
+SECURITY FEATURES
+-----------------
+✓ Local-only deployment (127.0.0.1)
+✓ File type validation (PDF only)
+✓ File size limit (50MB)
+✓ Secure filename handling
+✓ No directory traversal vulnerabilities
+✓ No sensitive data in logs
+✓ Environment-based secret key
+
+CALCULATION METHODOLOGY
+-----------------------
+- TOB Rate: 0.35% (0.0035)
+- Max per transaction: €1,600
+- Exchange rates: ECB official XML feed
+- Grouping: Same stock + same day + same type = 1 transaction
+- Day trades: Both buy and sell sides taxed separately
+
+OUTPUT FILES
+------------
+Each calculation generates 4 files:
+1. belgian_tob_tax_TIMESTAMP.xlsx - Excel report
+2. belgian_tob_tax_TIMESTAMP.csv  - Belgian CSV format
+3. belgian_tob_tax_TIMESTAMP.pdf  - PDF report
+4. TOB_Tax_Summary_TIMESTAMP.md   - Markdown summary
+
+TESTING CHECKLIST
+-----------------
+□ Upload Interactive Brokers PDF
+□ Upload Saxo Bank PDF
+□ Verify Excel output formatting
+□ Verify CSV Belgian format (;,)
+□ Verify PDF generation
+□ Verify Markdown content
+□ Check ECB rate fetching
+□ Verify transaction grouping
+□ Verify day trade handling
+□ Test error handling
+□ Test stop script
+
+KNOWN LIMITATIONS
+-----------------
+- Windows batch scripts only (macOS/Linux need manual startup)
+- Local deployment only (not for production hosting)
+- Single-user application
+- No database (file-based storage)
+- No automated tests
+
+SUPPORT
+-------
+For issues, provide:
+- Error message (full console output)
+- Screenshot of browser error
+- Broker and statement type
+- Python version (python --version)
+- Windows version
+
+LICENSE
+-------
+Personal use only. Provided "as-is" without warranty.
+User responsible for tax calculation accuracy.
+
+CHANGELOG
+---------
+v2.0 (January 2026) - Initial Flask web application release
+  - Complete GUI with drag-and-drop
+  - Support for Interactive Brokers and Saxo Bank
+  - Multiple output formats
+  - Comprehensive documentation
+  - Windows startup scripts
+
+CREDITS
+-------
+Developer: Fried Meulders
+AI Assistant: Claude (Anthropic)
+ECB Exchange Rates: European Central Bank
+PDF Processing: pdfplumber
+Excel Generation: openpyxl
+Web Framework: Flask
+
+==============================================
+END OF PACKAGE CONTENTS

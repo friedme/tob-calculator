@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+
+{% block title %}Pagina niet gevonden{% endblock %}
+
+{% block content %}
+<div style="text-align: center; padding: 80px 20px;">
+    <div style="font-size: 8em; color: #e2e8f0;">❌</div>
+    
+    <h1 style="font-size: 3em; color: #2d3748; margin: 20px 0;">404</h1>
+    
+    <h2 style="color: #4a5568; font-weight: normal; margin-bottom: 30px;">
+        Pagina niet gevonden
+    </h2>
+    
+    <p style="color: #718096; font-size: 1.1em; margin-bottom: 40px;">
+        De pagina die u zoekt bestaat niet of is verplaatst.
+    </p>
+    
+    <a href="{{ url_for('index') }}" class="btn btn-primary" style="margin-right: 15px;">
+        🏠 Terug naar Home
+    </a>
+    
+    <a href="{{ url_for('about') }}" class="btn btn-secondary">
+        ℹ️ Informatie
+    </a>
+</div>
+{% endblock %}

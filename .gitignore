@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.class
+venv/
+*.egg-info/
+
+# Uploads and outputs (user data)
+uploads/
+outputs/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store

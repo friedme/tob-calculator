@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Belgian TOB Tax Calculator{% endblock %}</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            line-height: 1.6;
+            color: #2c3e50;
+            background: #f5f7fa;
+            min-height: 100vh;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            min-height: 100vh;
+            box-shadow: 0 0 40px rgba(0,0,0,0.08);
+        }
+        
+        header {
+            background: linear-gradient(135deg, #1a5276 0%, #2980b9 100%);
+            color: white;
+            padding: 40px 30px;
+            text-align: center;
+        }
+        
+        header h1 {
+            font-size: 2.2em;
+            margin-bottom: 8px;
+            font-weight: 600;
+        }
+        
+        header p {
+            font-size: 1.05em;
+            opacity: 0.95;
+        }
+        
+        nav {
+            background: white;
+            padding: 0;
+            display: flex;
+            border-bottom: 1px solid #e1e8ed;
+        }
+        
+        nav a {
+            color: #5a6c7d;
+            text-decoration: none;
+            padding: 18px 30px;
+            transition: all 0.2s;
+            font-weight: 500;
+            border-bottom: 3px solid transparent;
+        }
+        
+        nav a:hover {
+            color: #1a5276;
+            background: #f8f9fa;
+        }
+        
+        nav a.active {
+            color: #1a5276;
+            border-bottom-color: #1a5276;
+        }
+        
+        main {
+            padding: 40px;
+            min-height: 500px;
+        }
+        
+        .flash-messages {
+            margin-bottom: 20px;
+        }
+        
+        .flash {
+            padding: 14px 18px;
+            border-radius: 8px;
+            margin-bottom: 12px;
+            font-size: 0.95em;
+        }
+        
+        .flash.error {
+            background: #fee;
+            border-left: 4px solid #e74c3c;
+            color: #c0392b;
+        }
+        
+        .flash.success {
+            background: #d4edda;
+            border-left: 4px solid #28a745;
+            color: #155724;
+        }
+        
+        .upload-zone {
+            border: 2px dashed #cbd5e0;
+            border-radius: 12px;
+            padding: 60px 40px;
+            text-align: center;
+            background: #f8f9fa;
+            transition: all 0.3s;
+            cursor: pointer;
+        }
+        
+        .upload-zone:hover {
+            border-color: #1a5276;
+            background: #eaf2f8;
+        }
+        
+        .upload-zone.dragover {
+            border-color: #1a5276;
+            background: #d4e6f1;
+            transform: scale(1.01);
+        }
+        
+        .upload-icon {
+            font-size: 3.5em;
+            margin-bottom: 15px;
+        }
+        
+        .btn {
+            background: linear-gradient(135deg, #0e6655 0%, #1abc9c 100%);
+            color: white;
+            padding: 14px 32px;
+            border: none;
+            border-radius: 8px;
+            font-size: 1.05em;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-decoration: none;
+            display: inline-block;
+            box-shadow: 0 4px 12px rgba(14, 102, 85, 0.3);
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 16px rgba(14, 102, 85, 0.4);
+        }
+        
+        .btn-secondary {
+            background: #6c757d;
+            box-shadow: 0 4px 12px rgba(108, 117, 125, 0.3);
+        }
+        
+        .btn-secondary:hover {
+            background: #5a6268;
+            box-shadow: 0 6px 16px rgba(108, 117, 125, 0.4);
+        }
+        
+        .btn-success {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+        }
+        
+        .btn-success:hover {
+            box-shadow: 0 6px 16px rgba(16, 185, 129, 0.4);
+        }
+        
+        input[type="file"] {
+            display: none;
+        }
+        
+        .file-list {
+            margin-top: 25px;
+            text-align: left;
+        }
+        
+        .file-item {
+            background: white;
+            padding: 12px 18px;
+            margin: 8px 0;
+            border-radius: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border: 1px solid #e1e8ed;
+            transition: all 0.2s;
+        }
+        
+        .file-item:hover {
+            border-color: #cbd5e0;
+            background: #f8f9fa;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin: 30px 0;
+        }
+        
+        .stat-card {
+            background: linear-gradient(135deg, #1a5276 0%, #2980b9 100%);
+            color: white;
+            padding: 35px;
+            border-radius: 12px;
+            text-align: center;
+            box-shadow: 0 8px 20px rgba(26, 82, 118, 0.25);
+        }
+        
+        .stat-card h3 {
+            font-size: 2.5em;
+            margin-bottom: 8px;
+            font-weight: 600;
+        }
+        
+        .stat-card p {
+            font-size: 1.05em;
+            opacity: 0.95;
+        }
+        
+        .download-buttons {
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+            margin-top: 30px;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            font-size: 0.95em;
+        }
+        
+        table th {
+            background: #f8f9fa;
+            color: #2c3e50;
+            padding: 14px 12px;
+            text-align: left;
+            font-weight: 600;
+            border-bottom: 2px solid #e1e8ed;
+        }
+        
+        table td {
+            padding: 12px;
+            border-bottom: 1px solid #f0f0f0;
+        }
+        
+        table tr:hover {
+            background: #f8f9fa;
+        }
+        
+        footer {
+            background: #f8f9fa;
+            padding: 25px;
+            text-align: center;
+            color: #5a6c7d;
+            border-top: 1px solid #e1e8ed;
+            margin-top: 40px;
+        }
+        
+        footer p {
+            margin: 5px 0;
+        }
+        
+        .info-box {
+            background: #f8f9fa;
+            border-left: 4px solid #1a5276;
+            padding: 20px 24px;
+            margin: 20px 0;
+            border-radius: 8px;
+        }
+        
+        .info-box h3 {
+            color: #2c3e50;
+            margin-bottom: 12px;
+            font-size: 1.15em;
+            font-weight: 600;
+        }
+        
+        .info-box.warning {
+            background: #fff9e6;
+            border-left-color: #f59e0b;
+        }
+        
+        .info-box.info {
+            background: #eff6ff;
+            border-left-color: #3b82f6;
+        }
+        
+        @media (max-width: 768px) {
+            header h1 {
+                font-size: 1.6em;
+            }
+            
+            main {
+                padding: 20px;
+            }
+            
+            .stats-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            nav a {
+                padding: 15px 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🇧🇪 Belgian TOB Tax Calculator</h1>
+            <p>Automated calculation of Tax on Stock Exchange Transactions</p>
+        </header>
+        
+        <nav>
+            <a href="{{ url_for('index') }}" class="{% if request.endpoint == 'index' %}active{% endif %}">Home</a>
+            <a href="{{ url_for('about') }}" class="{% if request.endpoint == 'about' %}active{% endif %}">About</a>
+        </nav>
+        
+        <main>
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                    <div class="flash-messages">
+                        {% for category, message in messages %}
+                            <div class="flash {{ category }}">{{ message }}</div>
+                        {% endfor %}
+                    </div>
+                {% endif %}
+            {% endwith %}
+            
+            {% block content %}{% endblock %}
+        </main>
+        
+        <footer>
+            <p><strong>Belgian TOB Tax Calculator</strong> | Powered by Flask & ECB Exchange Rates</p>
+            <p style="margin-top: 8px; font-size: 0.9em; opacity: 0.8;">
+                ⚠️ For informational purposes only. Always verify with a tax professional.
+            </p>
+        </footer>
+    </div>
+    
+    {% block scripts %}{% endblock %}
+</body>
+</html>

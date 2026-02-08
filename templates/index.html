@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div style="max-width: 800px; margin: 0 auto;">
+    <h2 style="margin-bottom: 25px; color: #2c3e50; font-weight: 600;">Upload Broker Statements</h2>
+    
+    <form action="{{ url_for('upload_files') }}" method="POST" enctype="multipart/form-data" id="uploadForm">
+        <div class="upload-zone" id="dropZone">
+            <div class="upload-icon">📄</div>
+            <h3 style="margin-bottom: 10px; font-weight: 600;">Drop PDF files here or click to browse</h3>
+            <p style="color: #5a6c7d; margin-bottom: 20px;">Upload one or more broker statements (PDF format)</p>
+            <input type="file" name="pdfs" id="fileInput" multiple accept=".pdf">
+            <label for="fileInput" class="btn" style="background: linear-gradient(135deg, #1a5276 0%, #2980b9 100%); box-shadow: 0 4px 12px rgba(26, 82, 118, 0.3);">Choose Files</label>
+        </div>
+
+        <div style="text-align: center; margin-top: 30px;">
+            <button type="submit" class="btn" id="submitBtn" disabled>
+                Calculate TOB Tax
+            </button>
+        </div>
+
+        <div class="file-list" id="fileList" style="display: none; margin-top: 30px;">
+            <h3 style="margin-bottom: 15px; color: #2c3e50; font-weight: 600;">Selected Files:</h3>
+            <div id="fileItems"></div>
+        </div>
+    </form>
+    
+    <div class="info-box" style="margin-top: 40px;">
+        <h3>ℹ️ How It Works</h3>
+        <ol style="margin-left: 20px; margin-top: 10px; line-height: 2;">
+            <li>Upload your broker PDF statements</li>
+            <li>System extracts all stock transactions</li>
+            <li>Fetches official ECB exchange rates</li>
+            <li>Calculates TOB at 0.35% on EUR amounts</li>
+            <li>Download Excel and PDF reports</li>
+        </ol>
+    </div>
+
+    <div class="info-box" style="margin-top: 20px;">
+        <h3>📋 Supported Brokers</h3>
+        <ul style="margin-left: 20px; margin-top: 10px; line-height: 1.8;">
+            <li><strong>Interactive Brokers</strong> - English statements</li>
+            <li><strong>Saxo Bank</strong> - Dutch/Flemish statements</li>
+        </ul>
+    </div>
+
+    <div class="info-box warning" style="margin-top: 20px;">
+        <h3>⚠️ Important Notes</h3>
+        <ul style="margin-left: 20px; margin-top: 10px; line-height: 1.8;">
+            <li>Same-side transactions are automatically grouped (e.g., multiple buys on same day)</li>
+            <li>Day trades: Both buy and sell sides are taxed separately</li>
+            <li>Maximum file size: 16 MB per file</li>
+            <li>Files are processed securely and deleted after calculation</li>
+        </ul>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const dropZone = document.getElementById('dropZone');
+    const fileInput = document.getElementById('fileInput');
+    const fileList = document.getElementById('fileList');
+    const fileItems = document.getElementById('fileItems');
+    const submitBtn = document.getElementById('submitBtn');
+    const uploadForm = document.getElementById('uploadForm');
+    let selectedFiles = [];
+
+    // Prevent default drag behaviors
+    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+        dropZone.addEventListener(eventName, preventDefaults, false);
+        document.body.addEventListener(eventName, preventDefaults, false);
+    });
+
+    function preventDefaults(e) {
+        e.preventDefault();
+        e.stopPropagation();
+    }
+
+    // Highlight drop zone when dragging over
+    ['dragenter', 'dragover'].forEach(eventName => {
+        dropZone.addEventListener(eventName, () => {
+            dropZone.classList.add('dragover');
+        }, false);
+    });
+
+    ['dragleave', 'drop'].forEach(eventName => {
+        dropZone.addEventListener(eventName, () => {
+            dropZone.classList.remove('dragover');
+        }, false);
+    });
+
+    // Handle dropped files
+    dropZone.addEventListener('drop', (e) => {
+        addFiles(e.dataTransfer.files);
+    });
+
+    // Handle file input change
+    fileInput.addEventListener('change', (e) => {
+        addFiles(e.target.files);
+        fileInput.value = '';
+    });
+
+    function addFiles(newFiles) {
+        const existingNames = new Set(selectedFiles.map(f => f.name));
+        Array.from(newFiles).forEach(file => {
+            if (!existingNames.has(file.name)) {
+                selectedFiles.push(file);
+            }
+        });
+        renderFileList();
+    }
+
+    function removeFile(index) {
+        selectedFiles.splice(index, 1);
+        renderFileList();
+    }
+
+    function renderFileList() {
+        if (selectedFiles.length === 0) {
+            fileList.style.display = 'none';
+            submitBtn.disabled = true;
+            return;
+        }
+
+        fileList.style.display = 'block';
+        fileItems.innerHTML = '';
+
+        selectedFiles.forEach((file, index) => {
+            const fileItem = document.createElement('div');
+            fileItem.className = 'file-item';
+            fileItem.innerHTML = `
+                <span>📄 ${file.name}</span>
+                <span style="display: flex; align-items: center; gap: 12px;">
+                    <span style="color: #5a6c7d; font-size: 0.9em;">${(file.size / 1024).toFixed(1)} KB</span>
+                    <button type="button" onclick="removeFile(${index})" style="background: none; border: none; color: #e74c3c; font-size: 1.3em; cursor: pointer; padding: 0 4px; line-height: 1;" title="Remove file">&times;</button>
+                </span>
+            `;
+            fileItems.appendChild(fileItem);
+        });
+
+        submitBtn.disabled = false;
+    }
+
+    // Sync selectedFiles to input before submit
+    uploadForm.addEventListener('submit', (e) => {
+        const dt = new DataTransfer();
+        selectedFiles.forEach(file => dt.items.add(file));
+        fileInput.files = dt.files;
+    });
+
+    // Click to browse
+    dropZone.addEventListener('click', (e) => {
+        if (e.target.tagName !== 'BUTTON') {
+            fileInput.click();
+        }
+    });
+</script>
+{% endblock %}
