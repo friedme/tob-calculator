@@ -418,161 +418,345 @@ def _extract_ib_alternative(text: str) -> Tuple[List[Transaction], List[str]]:
 # SAXO BANK EXTRACTION
 # =============================================================================
 
+def _get_instrument_from_adjacent_lines(lines: list, current_idx: int) -> str:
+    """
+    Reconstruct instrument name from adjacent lines when pdfplumber splits
+    long instrument names across multiple lines.
+
+    Saxo PDFs place the first part of the name on the line BEFORE the transaction
+    and the second part on the line AFTER. E.g.:
+        MillicomInternational
+        18-feb-2026 19-feb-2026 6595348433 Aandelen USD Verkoop SLUITEN ...
+        CellularSA
+    """
+    parts = []
+
+    # Check previous line for instrument name fragment
+    if current_idx > 0:
+        prev_line = lines[current_idx - 1].strip()
+        # Instrument fragments are text-only lines (no dates, no numbers-heavy content)
+        if (prev_line and
+            not re.match(r'\d{1,2}-[a-z]{3}-\d{4}', prev_line, re.IGNORECASE) and
+            not re.match(r'Transacti', prev_line, re.IGNORECASE) and
+            not re.match(r'Totaal', prev_line, re.IGNORECASE) and
+            not re.match(r'Pagina', prev_line, re.IGNORECASE) and
+            not re.match(r'Saxo', prev_line, re.IGNORECASE) and
+            not re.match(r'Verslagperiode', prev_line, re.IGNORECASE) and
+            not re.match(r'Inleiding', prev_line, re.IGNORECASE) and
+            re.search(r'[A-Za-z]{2,}', prev_line)):
+            parts.append(prev_line)
+
+    # Check next line for instrument name fragment
+    if current_idx < len(lines) - 1:
+        next_line = lines[current_idx + 1].strip()
+        if (next_line and
+            not re.match(r'\d{1,2}-[a-z]{3}-\d{4}', next_line, re.IGNORECASE) and
+            not re.match(r'Transacti', next_line, re.IGNORECASE) and
+            not re.match(r'Totaal', next_line, re.IGNORECASE) and
+            not re.match(r'Pagina', next_line, re.IGNORECASE) and
+            not re.match(r'Saxo', next_line, re.IGNORECASE) and
+            not re.match(r'Verslagperiode', next_line, re.IGNORECASE) and
+            not re.match(r'Inleiding', next_line, re.IGNORECASE) and
+            re.search(r'[A-Za-z]{2,}', next_line)):
+            parts.append(next_line)
+
+    return ' '.join(parts) if parts else 'Unknown'
+
+
 def extract_saxo_transactions(text: str) -> ExtractionResult:
     """
-    Extract transactions from Saxo Bank statement (Dutch/Flemish format)
-    
-    Saxo Format (from Transacties section):
-    - Two accounts: EUR (98900/1008313EUR) and USD (98900/1517751USD)
-    - Columns: Transactiedatum, Valutadatum, TransactieID, Product, Instrument, 
-               Instrumentvaluta, Type, Openen/sluiten, Aantal, Koers, 
-               Omrekeningskoers, Gerealiseerde W/V, Boekingsbedrag, Booked Costs
-    - CRITICAL: Boekingsbedrag is in the ACCOUNT currency (EUR or USD), not instrument currency
-    - EUR account amounts are in EUR, USD account amounts are in USD
-    - Verkoop = Sell, Koop = Buy
-    - Negative Aantal = Sell
-    
-    Args:
-        text: Extracted PDF text
-        
-    Returns:
-        ExtractionResult with transactions
+    Extract transactions from Saxo Bank statement (Dutch/Flemish format).
+    Auto-detects between two Saxo report formats:
+
+    1. Transactierapport (preferred): Block-based format with "Transactie <Name> Koop/Verkoop..."
+    2. TransactionBalance (legacy): Columnar format with "Transacties - Zelf Beleggen" sections
+
+    CRITICAL: TOB is calculated on shares x price (gross trade value, BEFORE costs).
+    The Boekingsbedrag includes broker costs and must NOT be used as the tax base.
+    """
+    # Try the Transactierapport format first (preferred, no line-splitting issues)
+    if 'Transactierapport' in text or re.search(r'Transactie\s+\S+.*?(Koop|Verkoop)', text):
+        result = _extract_saxo_transactierapport(text)
+        if result.success:
+            return result
+
+    # Fall back to TransactionBalance columnar format
+    result = _extract_saxo_transaction_balance(text)
+    if result.success:
+        return result
+
+    # Last resort: alternative line-by-line extraction
+    transactions, warnings = _extract_saxo_alternative(text)
+    if transactions:
+        return ExtractionResult(
+            transactions=transactions,
+            broker=Broker.SAXO_BANK,
+            warnings=warnings,
+            raw_text=text,
+            success=True
+        )
+
+    return ExtractionResult(
+        transactions=[],
+        broker=Broker.SAXO_BANK,
+        warnings=[],
+        raw_text=text,
+        success=False,
+        error_message="No transactions found in Saxo Bank statement. "
+                     "Check that the PDF contains stock transactions."
+    )
+
+
+# Dutch month abbreviations (shared across Saxo parsers)
+DUTCH_MONTHS = {
+    'jan': '01', 'feb': '02', 'mrt': '03', 'apr': '04',
+    'mei': '05', 'jun': '06', 'jul': '07', 'aug': '08',
+    'sep': '09', 'okt': '10', 'nov': '11', 'dec': '12'
+}
+
+# Supported currencies
+SUPPORTED_CURRENCIES = 'EUR|USD|GBP|CAD|CHF|SEK|NOK|DKK|JPY|AUD|HKD'
+
+
+def _parse_belgian_number(s: str) -> float:
+    """Parse a Belgian-formatted number: 1.234,56 -> 1234.56"""
+    return float(s.replace('.', '').replace(',', '.'))
+
+
+def _parse_dutch_date(day: str, month_nl: str, year: str) -> str:
+    """Parse a Dutch date (dd-mmm-yyyy) to YYYY-MM-DD format."""
+    month_num = DUTCH_MONTHS.get(month_nl.lower(), '01')
+    return f"{year}-{month_num}-{day.zfill(2)}"
+
+
+def _extract_saxo_transactierapport(text: str) -> ExtractionResult:
+    """
+    Extract from Saxo "Transactierapport" format.
+
+    Each transaction is a multi-line block:
+        Transactie <InstrumentName> Koop<Shares>@<Price><Currency> <CashEUR> -
+        Aandeelbedrag  Commissie  Boekingsbedrag  Totalekosten
+        <EUR>          <EUR>      <OrigCurrency>  <EUR>
+        Omrekeningskoers  Transactie-ID  ISIN
+        <rate>            <id>           <isin>
+
+    CRITICAL: We use shares x price as the amount (gross, before costs).
+    The currency is the instrument/trading currency, NOT the account currency.
     """
     transactions = []
     warnings = []
-    
     lines = text.split('\n')
-    
-    # Track current account currency
-    current_account_currency = None
-    in_transactions_section = False
-    
-    # Pattern to detect account sections
-    # e.g., "Transacties - Zelf Beleggen (98900/1008313EUR), EUR"
-    # e.g., "Transacties - Zelf Beleggen (98900/1517751USD), USD"
-    account_section_pattern = re.compile(
-        r'Transacties.*?(\d+/\d+)(EUR|USD).*?(EUR|USD)',
+
+    current_date = None
+
+    # Date line pattern: "25-feb-2026 3,77 49,76" or "05-jan-2026 -222,17 35,67"
+    date_line_pattern = re.compile(
+        r'^(\d{1,2})-([a-z]{3})-(\d{4})\s+',
         re.IGNORECASE
     )
-    
-    # Pattern for transaction rows
-    # Format: dd-mmm-yyyy dd-mmm-yyyy TransID Product Instrument Currency Type Action Aantal Koers Rate P/L Amount Costs
-    # Example: 27-nov-2025 01-dec-2025 6494810500 Aandelen JDC Group AG EUR Verkoop SLUITEN -889 26,000 1,0000 -2.806,14 23.102,44 -11,56
-    
-    # Dutch month abbreviations
-    dutch_months = {
-        'jan': '01', 'feb': '02', 'mrt': '03', 'apr': '04', 
-        'mei': '05', 'jun': '06', 'jul': '07', 'aug': '08',
-        'sep': '09', 'okt': '10', 'nov': '11', 'dec': '12'
-    }
-    
-    # Transaction line pattern - flexible to handle various formats
-    # Looking for: date, transaction ID (digits), product type, instrument name, currency, type, etc.
+
+    # Transaction line: "Transactie <Name> <Koop|Verkoop><Shares>@<Price><Currency> <CashAmount> -"
+    # Examples:
+    #   Transactie RayonierAdvancedMaterialsInc. Koop14200@9,40USD -113.078,34 -
+    #   Transactie DolePLC Verkoop-9150@14,60USD 113.082,11 -
+    #   Transactie MillicomInternationalCellularSA Verkoop-3000@56,68USD 144.991,04 -
+    transaction_pattern = re.compile(
+        r'Transactie\s+'
+        r'(.+?)\s+'                                               # Instrument name
+        r'(Koop|Verkoop)'                                         # Buy/Sell
+        r'(-?[\d.]+)'                                             # Shares (may have . as thousands sep)
+        r'@'
+        r'([\d,.]+)'                                              # Price (Belgian format)
+        r'(' + SUPPORTED_CURRENCIES + r')'                        # Currency
+        r'\s',
+        re.IGNORECASE
+    )
+
+    for line in lines:
+        line = line.strip()
+
+        # Skip non-trade lines (dividends, corporate actions, interest, etc.)
+        if any(skip in line for skip in ['Corporateaction', 'Cashbedrag', 'Debetrente',
+                                          'creditrente', 'bewaarrente']):
+            continue
+
+        # Track current date from date header lines
+        date_match = date_line_pattern.match(line)
+        if date_match:
+            day, month_nl, year = date_match.groups()
+            current_date = _parse_dutch_date(day, month_nl, year)
+            continue
+
+        # Try to match a transaction line
+        trans_match = transaction_pattern.search(line)
+        if trans_match and current_date:
+            instrument, trans_type_nl, shares_str, price_str, currency = trans_match.groups()
+
+            shares = abs(int(shares_str.replace('.', '')))
+            price = _parse_belgian_number(price_str)
+
+            # CRITICAL: amount = shares x price (gross, BEFORE costs)
+            amount = round(shares * price, 2)
+
+            trans_type = 'Sell' if trans_type_nl.lower() == 'verkoop' else 'Buy'
+
+            transactions.append(Transaction(
+                date=current_date,
+                broker=Broker.SAXO_BANK.value,
+                stock=instrument.strip(),
+                trans_type=trans_type,
+                shares=shares,
+                currency=currency.upper(),
+                amount=amount,
+                original_line=line
+            ))
+
+    return ExtractionResult(
+        transactions=transactions,
+        broker=Broker.SAXO_BANK,
+        warnings=warnings,
+        raw_text=text,
+        success=len(transactions) > 0
+    )
+
+
+def _extract_saxo_transaction_balance(text: str) -> ExtractionResult:
+    """
+    Extract from Saxo "Transactie- en saldorapport" (TransactionBalance) format.
+
+    Columnar format with Transacties sections per account.
+    Columns: Date, ValDate, TransID, Product, Instrument, Currency, Type,
+             Action, Aantal, Koers, ConvRate, P/L, Boekingsbedrag, Costs
+
+    CRITICAL: We use shares x price (Aantal x Koers) as the amount, NOT the
+    Boekingsbedrag which includes broker costs. Currency = instrument currency.
+    """
+    transactions = []
+    warnings = []
+
+    lines = text.split('\n')
+
+    in_transactions_section = False
+
+    # Pattern to detect account sections
+    account_section_pattern = re.compile(
+        r'Transacties.*?\(\d+/\d+([A-Z]{3})\).*?,\s*([A-Z]{3})',
+        re.IGNORECASE
+    )
+
+    # Transaction with instrument on SAME line
     saxo_trans_pattern = re.compile(
-        r'(\d{1,2})-([a-z]{3})-(\d{4})\s+'                    # Transaction date (dd-mmm-yyyy)
-        r'(\d{1,2})-([a-z]{3})-(\d{4})\s+'                    # Value date
-        r'(\d+)\s+'                                            # Transaction ID
-        r'(Aandelen|Effecten)\s+'                              # Product type
-        r'(.+?)\s+'                                            # Instrument name
-        r'(EUR|USD)\s+'                                        # Instrument currency
-        r'(Verkoop|Koop)\s+'                                   # Type (Sell/Buy)
-        r'(SLUITEN|OPENING)\s+'                                # Open/Close
-        r'(-?[\d.]+)\s+'                                       # Aantal (shares) - may have period as thousands separator
-        r'([\d,.]+)\s+'                                        # Koers (price)
-        r'([\d,.]+)\s+'                                        # Omrekeningskoers (conversion rate)
-        r'(-?[\d.,]+|-)\s+'                                    # Gerealiseerde W/V (P/L)
-        r'(-?[\d.,]+)\s*'                                      # Boekingsbedrag (Amount)
+        r'(\d{1,2})-([a-z]{3})-(\d{4})\s+'                           # Transaction date
+        r'(\d{1,2})-([a-z]{3})-(\d{4})\s+'                           # Value date
+        r'(\d+)\s+'                                                   # Transaction ID
+        r'(Aandelen|Effecten)\s+'                                     # Product type
+        r'(.+?)\s+'                                                   # Instrument name
+        r'(' + SUPPORTED_CURRENCIES + r')\s+'                         # Instrument currency
+        r'(Verkoop|Koop)\s+'                                          # Type
+        r'(SLUITEN|OPENING)\s+'                                       # Open/Close
+        r'(-?[\d.]+)\s+'                                              # Aantal (shares)
+        r'([\d,.]+)\s+'                                               # Koers (price)
     , re.IGNORECASE)
-    
+
+    # Transaction with instrument SPLIT across lines (long names)
+    saxo_trans_no_inst_pattern = re.compile(
+        r'(\d{1,2})-([a-z]{3})-(\d{4})\s+'                           # Transaction date
+        r'(\d{1,2})-([a-z]{3})-(\d{4})\s+'                           # Value date
+        r'(\d+)\s+'                                                   # Transaction ID
+        r'(Aandelen|Effecten)\s+'                                     # Product type
+        r'(' + SUPPORTED_CURRENCIES + r')\s+'                         # Currency (directly after product)
+        r'(Verkoop|Koop)\s+'                                          # Type
+        r'(SLUITEN|OPENING)\s+'                                       # Open/Close
+        r'(-?[\d.]+)\s+'                                              # Aantal (shares)
+        r'([\d,.]+)\s+'                                               # Koers (price)
+    , re.IGNORECASE)
+
     for i, line in enumerate(lines):
         line = line.strip()
-        
+
         # Check for account section header
-        account_match = account_section_pattern.search(line)
-        if account_match:
-            _, account_type, section_currency = account_match.groups()
-            current_account_currency = section_currency
+        if account_section_pattern.search(line):
             in_transactions_section = True
             continue
-        
-        # Alternative: detect from simpler patterns
-        if 'Transacties - Zelf Beleggen' in line:
+
+        # Alternative section detection
+        if 'Transacties' in line and 'Beleggen' in line:
             in_transactions_section = True
-            if 'EUR), EUR' in line or '1008313EUR' in line:
-                current_account_currency = 'EUR'
-            elif 'USD), USD' in line or '1517751USD' in line:
-                current_account_currency = 'USD'
             continue
-        
-        # Skip if not in transactions section
+
         if not in_transactions_section:
             continue
-        
-        # Skip non-transaction lines
+
         if 'Cashbedrag' in line or 'Totaal' in line:
             continue
-        
-        # Try to match transaction line
+
+        if any(skip in line for skip in ['Cashdividend', 'aandelensplitsing', 'bewaarloon',
+                                          'Debetrente', 'creditrente', 'bewaarrente']):
+            continue
+
+        # Try pattern with instrument on the same line
         match = saxo_trans_pattern.search(line)
         if match:
-            (trans_day, trans_month, trans_year,
-             val_day, val_month, val_year,
-             trans_id, product, instrument, inst_currency,
-             trans_type_nl, open_close,
-             aantal, koers, conv_rate, pl, amount) = match.groups()
-            
-            # Parse date
-            month_num = dutch_months.get(trans_month.lower(), '01')
-            date = f"{trans_year}-{month_num}-{trans_day.zfill(2)}"
-            
-            # Parse aantal (shares) - remove period thousands separator
-            shares_str = aantal.replace('.', '').replace(',', '.')
-            shares = abs(int(float(shares_str)))
-            
-            # Parse amount (Boekingsbedrag) - Belgian format: 23.102,44 -> 23102.44
-            amount_str = amount.replace('.', '').replace(',', '.')
-            amount_value = abs(float(amount_str))
-            
-            # Determine transaction type
+            groups = match.groups()
+            trans_day, trans_month, trans_year = groups[0], groups[1], groups[2]
+            instrument = groups[8]
+            inst_currency = groups[9]
+            trans_type_nl = groups[10]
+            aantal_str = groups[12]
+            koers_str = groups[13]
+
+            date = _parse_dutch_date(trans_day, trans_month, trans_year)
+            shares = abs(int(aantal_str.replace('.', '').replace(',', '.')))
+            price = _parse_belgian_number(koers_str)
+            amount = round(shares * price, 2)
             trans_type = 'Sell' if trans_type_nl.lower() == 'verkoop' else 'Buy'
-            
-            # CRITICAL: Use account currency, not instrument currency
-            # The Boekingsbedrag is in the account's currency
-            currency = current_account_currency or inst_currency
-            
+
             transactions.append(Transaction(
                 date=date,
                 broker=Broker.SAXO_BANK.value,
                 stock=instrument.strip(),
                 trans_type=trans_type,
                 shares=shares,
-                currency=currency,
-                amount=amount_value,
+                currency=inst_currency.upper(),
+                amount=amount,
                 original_line=line
             ))
-    
-    # Try alternative extraction if pattern-based didn't work
-    if not transactions:
-        transactions, alt_warnings = _extract_saxo_alternative(text)
-        warnings.extend(alt_warnings)
-    
-    if not transactions:
-        return ExtractionResult(
-            transactions=[],
-            broker=Broker.SAXO_BANK,
-            warnings=warnings,
-            raw_text=text,
-            success=False,
-            error_message="No transactions found in Saxo Bank statement. "
-                         "Check that the PDF contains 'Transacties' sections."
-        )
-    
+            continue
+
+        # Try pattern with instrument split across lines
+        match_no_inst = saxo_trans_no_inst_pattern.search(line)
+        if match_no_inst:
+            groups = match_no_inst.groups()
+            trans_day, trans_month, trans_year = groups[0], groups[1], groups[2]
+            inst_currency = groups[8]
+            trans_type_nl = groups[9]
+            aantal_str = groups[11]
+            koers_str = groups[12]
+
+            instrument = _get_instrument_from_adjacent_lines(lines, i)
+            date = _parse_dutch_date(trans_day, trans_month, trans_year)
+            shares = abs(int(aantal_str.replace('.', '').replace(',', '.')))
+            price = _parse_belgian_number(koers_str)
+            amount = round(shares * price, 2)
+            trans_type = 'Sell' if trans_type_nl.lower() == 'verkoop' else 'Buy'
+
+            transactions.append(Transaction(
+                date=date,
+                broker=Broker.SAXO_BANK.value,
+                stock=instrument.strip(),
+                trans_type=trans_type,
+                shares=shares,
+                currency=inst_currency.upper(),
+                amount=amount,
+                original_line=line
+            ))
+
     return ExtractionResult(
         transactions=transactions,
         broker=Broker.SAXO_BANK,
         warnings=warnings,
         raw_text=text,
-        success=True
+        success=len(transactions) > 0
     )
 
 
@@ -594,11 +778,10 @@ def _extract_saxo_alternative(text: str) -> Tuple[List[Transaction], List[str]]:
     current_currency = 'EUR'  # Default
     
     for i, line in enumerate(lines):
-        # Track account currency
-        if '1008313EUR' in line or 'EUR), EUR' in line:
-            current_currency = 'EUR'
-        elif '1517751USD' in line or 'USD), USD' in line:
-            current_currency = 'USD'
+        # Track account currency from section headers
+        currency_section_match = re.search(r'\),\s*(EUR|USD|GBP|CAD|CHF|SEK|NOK|DKK|JPY|AUD)\s*$', line, re.IGNORECASE)
+        if currency_section_match:
+            current_currency = currency_section_match.group(1).upper()
         
         # Look for transaction patterns
         # Date pattern: dd-mmm-yyyy
@@ -674,6 +857,229 @@ def _extract_saxo_alternative(text: str) -> Tuple[List[Transaction], List[str]]:
 
 
 # =============================================================================
+# SAXO BANK EXCEL EXTRACTION
+# =============================================================================
+
+def extract_saxo_excel(file_path: str) -> ExtractionResult:
+    """
+    Extract transactions from Saxo Bank Excel export.
+
+    Uses the '_Transacties' sheet which contains clean, structured trade data:
+    - Traded Quantity (signed: positive=buy, negative=sell)
+    - Prijs (price at full precision)
+    - Verhandelde waarde (= shares x price, gross trade value BEFORE costs)
+    - Instrumentvaluta (trading currency)
+    - Instrument (clean name)
+    - Aangepaste transactiedatum (trade date as datetime)
+
+    This is the most reliable Saxo extraction method — no PDF parsing needed.
+    """
+    from openpyxl import load_workbook
+
+    transactions = []
+    warnings = []
+
+    try:
+        wb = load_workbook(file_path, read_only=True, data_only=True)
+    except Exception as e:
+        return ExtractionResult(
+            transactions=[],
+            broker=Broker.SAXO_BANK,
+            warnings=[f"Failed to open Excel file: {e}"],
+            raw_text="",
+            success=False,
+            error_message=f"Failed to open Excel file: {e}"
+        )
+
+    # Use _Transacties sheet (trade-only data) if available, fall back to Transacties
+    if '_Transacties' in wb.sheetnames:
+        ws = wb['_Transacties']
+        return _parse_saxo_trades_sheet(ws, warnings)
+    elif 'Transacties' in wb.sheetnames:
+        ws = wb['Transacties']
+        return _parse_saxo_main_sheet(ws, warnings)
+    else:
+        return ExtractionResult(
+            transactions=[],
+            broker=Broker.SAXO_BANK,
+            warnings=[f"No recognized sheet found. Available: {wb.sheetnames}"],
+            raw_text="",
+            success=False,
+            error_message="Excel file does not contain a 'Transacties' or '_Transacties' sheet."
+        )
+
+
+def _parse_saxo_trades_sheet(ws, warnings: list) -> ExtractionResult:
+    """
+    Parse the _Transacties sheet (trade-specific, clean data).
+
+    Key columns:
+    - Aangepaste transactiedatum (col index found dynamically)
+    - Acties (action string, to filter out stock splits)
+    - Traded Quantity (signed)
+    - Verhandelde waarde (gross trade value = shares x price)
+    - Instrumentvaluta (currency)
+    - Instrument (stock name)
+    """
+    transactions = []
+    rows = list(ws.iter_rows(values_only=True))
+
+    if len(rows) < 2:
+        return ExtractionResult(
+            transactions=[], broker=Broker.SAXO_BANK, warnings=warnings,
+            raw_text="", success=False,
+            error_message="No data rows in _Transacties sheet."
+        )
+
+    # Build column index from header row
+    headers = [str(h).strip().replace('\xa0', ' ') if h else '' for h in rows[0]]
+    col = {h: i for i, h in enumerate(headers)}
+
+    # Required columns
+    required = ['Aangepaste transactiedatum', 'Acties', 'Traded Quantity',
+                'Verhandelde waarde', 'Instrumentvaluta', 'Instrument']
+    missing = [r for r in required if r not in col]
+    if missing:
+        return ExtractionResult(
+            transactions=[], broker=Broker.SAXO_BANK, warnings=warnings,
+            raw_text="", success=False,
+            error_message=f"Missing columns in _Transacties sheet: {missing}"
+        )
+
+    for row in rows[1:]:
+        acties = str(row[col['Acties']] or '')
+
+        # Skip non-trade rows (stock splits, etc.)
+        if 'aandelensplitsing' in acties.lower():
+            continue
+
+        date_val = row[col['Aangepaste transactiedatum']]
+        quantity = row[col['Traded Quantity']]
+        traded_value = row[col['Verhandelde waarde']]
+        currency = row[col['Instrumentvaluta']]
+        instrument = row[col['Instrument']]
+
+        # Validate required fields
+        if not all([date_val, quantity, traded_value, currency, instrument]):
+            continue
+
+        # Parse date
+        if hasattr(date_val, 'strftime'):
+            date_str = date_val.strftime('%Y-%m-%d')
+        else:
+            continue
+
+        shares = abs(int(quantity))
+        # Verhandelde waarde = gross trade value (shares x price), already correct
+        amount = abs(float(traded_value))
+        trans_type = 'Sell' if int(quantity) < 0 else 'Buy'
+
+        transactions.append(Transaction(
+            date=date_str,
+            broker=Broker.SAXO_BANK.value,
+            stock=str(instrument).strip(),
+            trans_type=trans_type,
+            shares=shares,
+            currency=str(currency).upper(),
+            amount=round(amount, 2),
+            original_line=acties
+        ))
+
+    return ExtractionResult(
+        transactions=transactions,
+        broker=Broker.SAXO_BANK,
+        warnings=warnings,
+        raw_text="",
+        success=len(transactions) > 0
+    )
+
+
+def _parse_saxo_main_sheet(ws, warnings: list) -> ExtractionResult:
+    """
+    Parse the main Transacties sheet (has all transaction types mixed together).
+    Filter to only 'Transactie' type rows (excludes dividends, corporate actions).
+    Uses shares x price from the Acties column as the amount.
+    """
+    transactions = []
+    rows = list(ws.iter_rows(values_only=True))
+
+    if len(rows) < 2:
+        return ExtractionResult(
+            transactions=[], broker=Broker.SAXO_BANK, warnings=warnings,
+            raw_text="", success=False,
+            error_message="No data rows in Transacties sheet."
+        )
+
+    headers = [str(h).strip().replace('\xa0', ' ') if h else '' for h in rows[0]]
+    col = {h: i for i, h in enumerate(headers)}
+
+    required = ['Transactiedatum', 'Transactietype', 'Acties', 'Instrument',
+                'Instrumentvaluta']
+    missing = [r for r in required if r not in col]
+    if missing:
+        return ExtractionResult(
+            transactions=[], broker=Broker.SAXO_BANK, warnings=warnings,
+            raw_text="", success=False,
+            error_message=f"Missing columns in Transacties sheet: {missing}"
+        )
+
+    # Pattern to parse action string: "Koop 14200 @ 9.40 USD" or "Verkoop -9150 @ 14.60 USD"
+    action_pattern = re.compile(
+        r'(Koop|Verkoop)\s+(-?\d+)\s+@\s+([\d.]+)\s+([A-Z]{3})',
+        re.IGNORECASE
+    )
+
+    for row in rows[1:]:
+        trans_type_raw = str(row[col['Transactietype']] or '')
+
+        # Only process actual trades
+        if trans_type_raw != 'Transactie':
+            continue
+
+        acties = str(row[col['Acties']] or '')
+        action_match = action_pattern.search(acties)
+        if not action_match:
+            continue
+
+        trans_type_nl, shares_str, price_str, currency = action_match.groups()
+
+        date_val = row[col['Transactiedatum']]
+        instrument = row[col['Instrument']]
+
+        if not all([date_val, instrument]):
+            continue
+
+        if hasattr(date_val, 'strftime'):
+            date_str = date_val.strftime('%Y-%m-%d')
+        else:
+            continue
+
+        shares = abs(int(shares_str))
+        price = float(price_str)
+        amount = round(shares * price, 2)
+        trans_type = 'Sell' if trans_type_nl.lower() == 'verkoop' else 'Buy'
+
+        transactions.append(Transaction(
+            date=date_str,
+            broker=Broker.SAXO_BANK.value,
+            stock=str(instrument).strip(),
+            trans_type=trans_type,
+            shares=shares,
+            currency=currency.upper(),
+            amount=amount,
+            original_line=acties
+        ))
+
+    return ExtractionResult(
+        transactions=transactions,
+        broker=Broker.SAXO_BANK,
+        warnings=warnings,
+        raw_text="",
+        success=len(transactions) > 0
+    )
+
+
+# =============================================================================
 # ECB RATE FETCHING
 # =============================================================================
 
@@ -746,31 +1152,35 @@ def parse_ecb_xml(xml_content: bytes, dates_needed: set) -> Dict[str, Dict[str, 
                 rate = float(curr_cube.get('rate'))
                 rates[date][currency] = rate
     
+    # Build a lookup of all available dates and their rates for efficient fallback
+    all_rates_by_date = {}
+    for date_cube in root.findall('.//default:Cube[@time]', ns):
+        d = date_cube.get('time')
+        day_rates = {'EUR': 1.0}
+        for curr_cube in date_cube.findall('default:Cube[@currency]', ns):
+            currency = curr_cube.get('currency')
+            rate = float(curr_cube.get('rate'))
+            day_rates[currency] = rate
+        all_rates_by_date[d] = day_rates
+
     # Handle missing dates (weekends/holidays) - use previous business day
     for date in dates_needed:
         if date not in rates:
-            rates[date] = _get_rate_with_fallback(root, date, ns, all_available_dates)
-    
+            rates[date] = _get_rate_with_fallback(date, all_rates_by_date)
+
     return rates
 
 
-def _get_rate_with_fallback(root, date: str, ns: dict, available_dates: list) -> Dict[str, float]:
+def _get_rate_with_fallback(date: str, all_rates: Dict[str, Dict[str, float]]) -> Dict[str, float]:
     """Get rate for date, falling back to previous business day if needed"""
     current_date = datetime.strptime(date, '%Y-%m-%d')
-    
+
     # Try up to 7 days back (to handle long holiday periods)
     for i in range(1, 8):
         prev_date = (current_date - timedelta(days=i)).strftime('%Y-%m-%d')
-        
-        for date_cube in root.findall('.//default:Cube[@time]', ns):
-            if date_cube.get('time') == prev_date:
-                rates = {'EUR': 1.0}
-                for curr_cube in date_cube.findall('default:Cube[@currency]', ns):
-                    currency = curr_cube.get('currency')
-                    rate = float(curr_cube.get('rate'))
-                    rates[currency] = rate
-                return rates
-    
+        if prev_date in all_rates:
+            return all_rates[prev_date]
+
     raise ExtractionError(
         f"No ECB rate found for {date} or 7 days prior. "
         "This date may be outside the ECB historical data range.",
@@ -922,37 +1332,45 @@ def process_statements(pdf_paths: List[str]) -> Dict[str, Any]:
     
     if not pdf_paths:
         raise ExtractionError(
-            "No PDF files provided",
+            "No files provided",
             "no_files"
         )
-    
-    # Extract transactions from all PDFs
-    for pdf_path in pdf_paths:
-        try:
-            text = extract_text_from_pdf(pdf_path)
-        except ExtractionError:
-            raise
-        except Exception as e:
-            raise ExtractionError(
-                f"Failed to read PDF file: {pdf_path}",
-                "pdf_read_error",
-                {"path": pdf_path, "error": str(e)}
-            )
-        
-        broker = detect_broker(text)
-        brokers_found.add(broker.value)
-        
-        if broker == Broker.INTERACTIVE_BROKERS:
-            result = extract_ib_transactions(text)
-        elif broker == Broker.SAXO_BANK:
-            result = extract_saxo_transactions(text)
+
+    # Extract transactions from all files (PDFs and Excel)
+    for file_path in pdf_paths:
+        is_excel = file_path.lower().endswith('.xlsx')
+
+        if is_excel:
+            # Saxo Excel export — structured data, most reliable
+            result = extract_saxo_excel(file_path)
+            brokers_found.add(Broker.SAXO_BANK.value)
         else:
-            raise ExtractionError(
-                f"Unknown broker format in {pdf_path}. "
-                "Supported brokers: Interactive Brokers, Saxo Bank",
-                "unknown_broker",
-                {"path": pdf_path}
-            )
+            # PDF file — extract text and detect broker
+            try:
+                text = extract_text_from_pdf(file_path)
+            except ExtractionError:
+                raise
+            except Exception as e:
+                raise ExtractionError(
+                    f"Failed to read PDF file: {file_path}",
+                    "pdf_read_error",
+                    {"path": file_path, "error": str(e)}
+                )
+
+            broker = detect_broker(text)
+            brokers_found.add(broker.value)
+
+            if broker == Broker.INTERACTIVE_BROKERS:
+                result = extract_ib_transactions(text)
+            elif broker == Broker.SAXO_BANK:
+                result = extract_saxo_transactions(text)
+            else:
+                raise ExtractionError(
+                    f"Unknown broker format in {file_path}. "
+                    "Supported brokers: Interactive Brokers, Saxo Bank",
+                    "unknown_broker",
+                    {"path": file_path}
+                )
         
         if not result.success:
             raise ExtractionError(
@@ -1006,30 +1424,33 @@ def format_belgian_number(num: float, decimals: int = 2) -> str:
     """
     Format number in Belgian style
     Belgian format: 1.234,56 (period for thousands, comma for decimals)
-    
+
     Args:
         num: Number to format
         decimals: Number of decimal places
-        
+
     Returns:
         Belgian-formatted string
     """
+    sign = "-" if num < 0 else ""
+    num = abs(num)
+
     if decimals == 0:
-        formatted = f"{int(num):,}".replace(',', '.')
+        formatted = f"{int(round(num)):,}".replace(',', '.')
     else:
         int_part = int(num)
         dec_part = round(num - int_part, decimals)
-        
+
         # Format integer with periods
         int_str = f"{int_part:,}".replace(',', '.')
-        
+
         # Format decimal with comma
         dec_str = f"{dec_part:.{decimals}f}"[1:]  # Get ".XX" part
         dec_str = dec_str.replace('.', ',')  # Change to ",XX"
-        
+
         formatted = int_str + dec_str
-    
-    return formatted
+
+    return sign + formatted
 
 
 def validate_transaction_data(transactions: List[Dict]) -> List[str]:

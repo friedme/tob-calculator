@@ -127,7 +127,16 @@ def generate_excel(results: Dict[str, Any], output_path: str) -> str:
     
     # Info row
     ws.merge_cells('A2:J2')
-    ws['A2'] = f"Gegenereerd op: {datetime.now().strftime('%d-%m-%Y %H:%M')} | Periode: November 2025"
+    # Derive period from transaction dates
+    transactions = results.get('transactions', [])
+    if transactions:
+        dates = sorted(t.get('date', '') for t in transactions if t.get('date'))
+        period_start = datetime.strptime(dates[0], '%Y-%m-%d').strftime('%d-%m-%Y')
+        period_end = datetime.strptime(dates[-1], '%Y-%m-%d').strftime('%d-%m-%Y')
+        period_str = f"Periode: {period_start} - {period_end}"
+    else:
+        period_str = ""
+    ws['A2'] = f"Gegenereerd op: {datetime.now().strftime('%d-%m-%Y %H:%M')} | {period_str}"
     ws['A2'].font = Font(size=10, italic=True, name="Arial", color="666666")
     ws['A2'].alignment = Alignment(horizontal='center')
     
@@ -538,7 +547,7 @@ def generate_pdf(results: Dict[str, Any], output_path: str) -> str:
     ])
     
     # Create table with appropriate column widths
-    col_widths = [55, 65, 55, 35, 45, 30, 55, 40, 50, 45]
+    col_widths = [52, 58, 55, 30, 42, 28, 58, 38, 62, 52]
     
     trans_table = Table(table_data, colWidths=col_widths, repeatRows=1)
     trans_table.setStyle(TableStyle([

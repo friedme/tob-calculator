@@ -7,9 +7,9 @@
     <form action="{{ url_for('upload_files') }}" method="POST" enctype="multipart/form-data" id="uploadForm">
         <div class="upload-zone" id="dropZone">
             <div class="upload-icon">📄</div>
-            <h3 style="margin-bottom: 10px; font-weight: 600;">Drop PDF files here or click to browse</h3>
-            <p style="color: #5a6c7d; margin-bottom: 20px;">Upload one or more broker statements (PDF format)</p>
-            <input type="file" name="pdfs" id="fileInput" multiple accept=".pdf">
+            <h3 style="margin-bottom: 10px; font-weight: 600;">Drop files here or click to browse</h3>
+            <p style="color: #5a6c7d; margin-bottom: 20px;">Upload broker statements (PDF) or Saxo Excel exports (.xlsx)</p>
+            <input type="file" name="pdfs" id="fileInput" multiple accept=".pdf,.xlsx">
             <label for="fileInput" class="btn" style="background: linear-gradient(135deg, #1a5276 0%, #2980b9 100%); box-shadow: 0 4px 12px rgba(26, 82, 118, 0.3);">Choose Files</label>
         </div>
 

@@ -50,7 +50,7 @@ app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'tob-calculator-local-de
 app.config['UPLOAD_FOLDER'] = Path(__file__).parent / 'uploads'
 app.config['OUTPUT_FOLDER'] = Path(__file__).parent / 'outputs'
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max (broker PDFs can be large)
-app.config['ALLOWED_EXTENSIONS'] = {'pdf'}
+app.config['ALLOWED_EXTENSIONS'] = {'pdf', 'xlsx'}
 
 # Ensure folders exist
 app.config['UPLOAD_FOLDER'].mkdir(parents=True, exist_ok=True)
@@ -69,8 +69,8 @@ ERROR_MESSAGES = {
     },
     'invalid_files': {
         'title': 'Ongeldige bestanden',
-        'message': 'Alleen PDF-bestanden worden geaccepteerd.',
-        'suggestion': 'Zorg ervoor dat u de originele PDF-statements van uw broker uploadt.'
+        'message': 'Alleen PDF- en Excel-bestanden (.xlsx) worden geaccepteerd.',
+        'suggestion': 'Zorg ervoor dat u de originele PDF-statements of Excel-exports van uw broker uploadt.'
     },
     'unknown_broker': {
         'title': 'Onbekend brokerformaat',
@@ -154,6 +154,28 @@ def get_error_response(error_type: str, details: str = None) -> dict:
 # =============================================================================
 # UTILITY FUNCTIONS
 # =============================================================================
+
+DUTCH_MONTHS = {
+    1: 'Jan', 2: 'Feb', 3: 'Mrt', 4: 'Apr', 5: 'Mei', 6: 'Jun',
+    7: 'Jul', 8: 'Aug', 9: 'Sep', 10: 'Okt', 11: 'Nov', 12: 'Dec'
+}
+
+
+def get_period_label(transactions: list) -> str:
+    """Derive a period label like 'Jan-Feb 2026' from transaction dates."""
+    dates = sorted(t.get('date', '') for t in transactions if t.get('date'))
+    if not dates:
+        return datetime.now().strftime('%Y%m%d')
+    first = datetime.strptime(dates[0], '%Y-%m-%d')
+    last = datetime.strptime(dates[-1], '%Y-%m-%d')
+    m1 = DUTCH_MONTHS[first.month]
+    m2 = DUTCH_MONTHS[last.month]
+    if first.year == last.year:
+        if first.month == last.month:
+            return f"{m1} {first.year}"
+        return f"{m1}-{m2} {first.year}"
+    return f"{m1} {first.year}-{m2} {last.year}"
+
 
 def allowed_file(filename: str) -> bool:
     """Check if file extension is allowed"""
@@ -248,33 +270,38 @@ def upload_files():
         
         # Generate output files
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        output_base = app.config['OUTPUT_FOLDER'] / f'tob_report_{timestamp}'
-        
-        excel_path = f'{output_base}.xlsx'
-        csv_path = f'{output_base}.csv'
-        md_path = f'{output_base}.md'
-        
+        period_label = get_period_label(results['transactions'])
+        file_base = f'TOB Report - {period_label}'
+        # Internal storage uses timestamp to avoid collisions
+        storage_base = app.config['OUTPUT_FOLDER'] / f'tob_report_{timestamp}'
+
+        excel_path = f'{storage_base}.xlsx'
+        csv_path = f'{storage_base}.csv'
+        md_path = f'{storage_base}.md'
+
         generate_excel(results, excel_path)
         generate_csv(results, csv_path)
         generate_markdown(results, md_path)
-        
+
         # Generate PDF if available
         pdf_path = None
         if REPORTLAB_AVAILABLE:
-            pdf_path = f'{output_base}.pdf'
+            pdf_path = f'{storage_base}.pdf'
             try:
                 generate_pdf(results, pdf_path)
             except Exception as e:
                 app.logger.warning(f"PDF generation failed: {e}")
                 pdf_path = None
-        
+
         # Clean up uploaded files
         cleanup_files(uploaded_paths)
-        
+
         # Store results metadata
+        # 'files' = internal storage names, 'download_names' = user-friendly names
         results_meta = {
             'timestamp': timestamp,
             'generated_at': datetime.now().isoformat(),
+            'period_label': period_label,
             'transaction_count': len(results['transactions']),
             'total_eur': results['total_eur'],
             'total_tob': results['total_tob'],
@@ -285,6 +312,12 @@ def upload_files():
                 'csv': os.path.basename(csv_path),
                 'markdown': os.path.basename(md_path),
                 'pdf': os.path.basename(pdf_path) if pdf_path else None
+            },
+            'download_names': {
+                'excel': f'{file_base}.xlsx',
+                'csv': f'{file_base}.csv',
+                'markdown': f'{file_base}.md',
+                'pdf': f'{file_base}.pdf' if pdf_path else None
             },
             'transactions': results['transactions']  # Store for display
         }
@@ -400,11 +433,14 @@ def download(timestamp, filetype):
             flash('Bestand niet gevonden.', 'error')
             return redirect(url_for('results', timestamp=timestamp))
         
+        # Use friendly download name if available, otherwise fall back to storage name
+        download_name = results_data.get('download_names', {}).get(file_info['key']) or filename
+
         return send_file(
             str(filepath),
             mimetype=file_info['mimetype'],
             as_attachment=True,
-            download_name=filename
+            download_name=download_name
         )
     
     except Exception as e:
@@ -515,15 +551,17 @@ def belgian_number_filter(value, decimals=2):
         return ""
     try:
         value = float(value)
+        sign = "-" if value < 0 else ""
+        value = abs(value)
         if decimals == 0:
             int_part = int(round(value))
-            return f"{int_part:,}".replace(',', '.')
+            return sign + f"{int_part:,}".replace(',', '.')
         else:
             int_part = int(value)
             dec_part = round(value - int_part, decimals)
             int_str = f"{int_part:,}".replace(',', '.')
             dec_str = f"{dec_part:.{decimals}f}"[1:].replace('.', ',')
-            return int_str + dec_str
+            return sign + int_str + dec_str
     except (ValueError, TypeError):
         return str(value)
 
