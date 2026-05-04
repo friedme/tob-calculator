@@ -592,7 +592,11 @@ if __name__ == '__main__':
     print("Press Ctrl+C to stop")
     print("=" * 60)
 
-    if os.environ.get('WERKZEUG_RUN_MAIN') != 'true':
-        Timer(1.5, open_browser).start()    
-        
-    app.run(debug=True, host='127.0.0.1', port=5000)
+    host = os.environ.get('FLASK_HOST', '127.0.0.1')
+    debug = os.environ.get('FLASK_DEBUG', '1') == '1'
+    port = int(os.environ.get('FLASK_PORT', '5000'))
+
+    if host == '127.0.0.1' and os.environ.get('WERKZEUG_RUN_MAIN') != 'true':
+        Timer(1.5, open_browser).start()
+
+    app.run(debug=debug, host=host, port=port)
