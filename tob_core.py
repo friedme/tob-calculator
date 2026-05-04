@@ -234,7 +234,7 @@ def extract_ib_transactions(text: str) -> ExtractionResult:
             continue
         
         # Check for currency headers
-        for curr in ['AUD', 'CAD', 'GBP', 'JPY', 'USD', 'EUR', 'SEK', 'CHF', 'HKD', 'NOK', 'DKK']:
+        for curr in ['AUD', 'CAD', 'GBP', 'JPY', 'USD', 'EUR', 'SEK', 'CHF', 'HKD', 'NOK', 'DKK', 'HUF', 'PLN', 'CZK']:
             if line == curr or line == f'Stocks{curr}':
                 current_currency = curr
                 break
@@ -300,7 +300,7 @@ def extract_ib_transactions(text: str) -> ExtractionResult:
             if not trade_currency:
                 # Look back for currency context
                 context = ' '.join(lines[max(0, i-10):i])
-                for curr in ['AUD', 'CAD', 'GBP', 'USD', 'EUR', 'SEK']:
+                for curr in ['AUD', 'CAD', 'GBP', 'USD', 'EUR', 'SEK', 'CHF', 'HKD', 'NOK', 'DKK', 'HUF', 'PLN', 'CZK', 'JPY']:
                     if curr in context:
                         trade_currency = curr
                         break
@@ -373,7 +373,7 @@ def _extract_ib_alternative(text: str) -> Tuple[List[Transaction], List[str]]:
         line = line.strip()
         
         # Update currency context
-        for curr in ['AUD', 'CAD', 'GBP', 'JPY', 'USD', 'EUR', 'SEK']:
+        for curr in ['AUD', 'CAD', 'GBP', 'JPY', 'USD', 'EUR', 'SEK', 'CHF', 'HKD', 'NOK', 'DKK', 'HUF', 'PLN', 'CZK']:
             if f'Stocks{curr}' in line or line == curr:
                 current_currency = curr
                 break
@@ -515,7 +515,7 @@ DUTCH_MONTHS = {
 }
 
 # Supported currencies
-SUPPORTED_CURRENCIES = 'EUR|USD|GBP|CAD|CHF|SEK|NOK|DKK|JPY|AUD|HKD'
+SUPPORTED_CURRENCIES = 'EUR|USD|GBP|CAD|CHF|SEK|NOK|DKK|JPY|AUD|HKD|HUF|PLN|CZK'
 
 
 def _parse_belgian_number(s: str) -> float:
@@ -779,7 +779,7 @@ def _extract_saxo_alternative(text: str) -> Tuple[List[Transaction], List[str]]:
     
     for i, line in enumerate(lines):
         # Track account currency from section headers
-        currency_section_match = re.search(r'\),\s*(EUR|USD|GBP|CAD|CHF|SEK|NOK|DKK|JPY|AUD)\s*$', line, re.IGNORECASE)
+        currency_section_match = re.search(r'\),\s*(EUR|USD|GBP|CAD|CHF|SEK|NOK|DKK|JPY|AUD|HKD|HUF|PLN|CZK)\s*$', line, re.IGNORECASE)
         if currency_section_match:
             current_currency = currency_section_match.group(1).upper()
         
@@ -1481,7 +1481,7 @@ def validate_transaction_data(transactions: List[Dict]) -> List[str]:
             warnings.append(f"Transaction {i+1}: Invalid date format for {t.get('stock', 'unknown')}")
         
         # Check for known currency
-        known_currencies = {'EUR', 'USD', 'GBP', 'CAD', 'AUD', 'JPY', 'CHF', 'SEK', 'NOK', 'DKK', 'HKD'}
+        known_currencies = {'EUR', 'USD', 'GBP', 'CAD', 'AUD', 'JPY', 'CHF', 'SEK', 'NOK', 'DKK', 'HKD', 'HUF', 'PLN', 'CZK'}
         if t.get('currency', '') not in known_currencies:
             warnings.append(f"Transaction {i+1}: Unknown currency {t.get('currency', '')} for {t.get('stock', 'unknown')}")
     
