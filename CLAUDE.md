@@ -21,8 +21,8 @@ rates for FX. Runs in Docker on the Pi at http://192.168.128.200:5000.
 
 ## Run locally (Windows)
 
-`venv\` uses Python 3.12 (the Pi container runs 3.11) with package versions pinned to the
-container's `pip freeze`. Debug mode is on by default and a browser opens at
+`venv\` uses Python 3.12 (the Pi container runs 3.11) and installs the same locked
+`requirements.txt` as the container. Debug mode is on by default and a browser opens at
 http://localhost:5000.
 
 ```
@@ -30,6 +30,25 @@ venv\Scripts\python app.py
 ```
 
 `START_TOB_CALCULATOR.bat` does the same.
+
+## Dependencies
+
+Rebuilds are pinned end to end: the `Dockerfile` base image by digest, and every Python
+package (including sub-dependencies) in `requirements.txt`. The build installs with
+`--no-deps` and runs `pip check`, so an incomplete lock fails the build instead of silently
+pulling the latest version.
+
+- `requirements.in` lists the top-level packages. Edit only this file by hand.
+- `requirements.txt` is the generated lock, used by the Dockerfile and by `venv\` locally.
+  Regenerate it after editing `requirements.in` (needs `py -m pip install --user uv` once):
+
+```
+py -m uv pip compile requirements.in --universal --python-version 3.11 -o requirements.txt
+```
+
+To take a newer base image, replace the digest in the `Dockerfile` with the current one for
+`python:3.11-slim`. After any dependency or base-image change, re-run a known statement
+locally and on the Pi and compare against a stored report before using it for a filing.
 
 ## Deploy to the Pi
 

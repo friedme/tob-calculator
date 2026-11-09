@@ -9,6 +9,12 @@ venv/
 uploads/
 outputs/
 
+# Broker statements and reports dropped in the repo for debugging (user data)
+*.pdf
+*.xlsx
+*.xls
+*.csv
+
 # IDE
 .vscode/
 .idea/
