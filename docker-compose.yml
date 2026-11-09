@@ -1,6 +1,10 @@
 services:
   tob-calculator:
-    build: .
+    build:
+      context: .
+      # Build on the host network so pip reaches Pi-hole on 127.0.0.1; the default
+      # build sandbox only inherits the Pi's unusable IPv6 nameservers.
+      network: host
     ports:
       - "5000:5000"
     volumes:
