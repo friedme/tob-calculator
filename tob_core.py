@@ -180,25 +180,55 @@ def extract_ib_transactions(text: str) -> ExtractionResult:
     Line 2: MCE -350,000 0.2150 0.2300 75,250.00 -61.44 ...
     Line 3: 18:00:07
     
-    CRITICAL: 
+    CRITICAL:
     - JPY stocks have INTEGER proceeds (no decimals)
     - Other currencies have DECIMAL proceeds
     - Symbols can be mixed case (e.g., ZEGl)
+    - A multi-account statement repeats the whole statement per account, so there is one
+      Trades section per account, each preceded by summary tables whose rows look like trades
     """
     transactions = []
     warnings = []
-    
+
     lines = text.split('\n')
-    
+
     current_currency = None
     in_trades_section = False
+    in_stocks = False
     current_date = None
-    
+
     # Pattern to detect Trades section start
     trades_section_pattern = re.compile(r'^Trades\s*$', re.IGNORECASE)
-    
-    # Pattern for date line: 2025-11-26,
-    date_pattern = re.compile(r'^(\d{4}-\d{2}-\d{2}),')
+
+    # Statement sections that can follow Trades. Leaving the Trades section on these stops
+    # summary rows (e.g. Mark-to-Market Performance Summary: "7974.T 3,500 3,500 9,044.0000
+    # 8,289.0000 ...") being read as trades, and lets the next account's Trades start fresh.
+    other_sections = {
+        'Account Information', 'Net Asset Value', 'Change in NAV',
+        'Mark-to-Market Performance Summary', 'Realized & Unrealized Performance Summary',
+        'Month & Year to Date Performance Summary', 'Cash Report', 'Open Positions',
+        'Forex Balances', 'Net Stock Position Summary', 'Transaction Fees',
+        'Corporate Actions', 'Transfers', 'Deposits & Withdrawals', 'Dividends',
+        'Withholding Tax', 'Change in Dividend Accruals', 'Interest', 'Interest Accruals',
+        'Fees', 'Other Fees', 'Commission Adjustments',
+        'Stock Yield Enhancement Program Securities Lent Activity',
+        'Stock Yield Enhancement Program Securities Lent',
+        'Financial Instrument Information', 'Codes', 'Notes/Legal Notes',
+        'Location of Customer Assets, Positions and Money',
+    }
+
+    # Asset-class sub-headers inside Trades; only the Stocks table is parsed
+    non_stock_categories = {
+        'Forex', 'Equity and Index Options', 'Futures', 'Options On Futures', 'Bonds',
+        'Warrants', 'CFDs', 'Treasury Bills', 'Crypto',
+    }
+
+    currencies = ['AUD', 'CAD', 'GBP', 'JPY', 'USD', 'EUR', 'SEK', 'CHF', 'HKD', 'NOK', 'DKK', 'HUF', 'PLN', 'CZK']
+
+    # Pattern for date line: "2025-11-26," optionally followed by the time or by numeric
+    # fragments of a wrapped price cell ("2026-06-23, 2,297.633333"), but never by words
+    # (fee lines like "2026-09-17, 05:28:44 AUTOl UK Stamp Tax ..." are not trade dates)
+    date_pattern = re.compile(r'^(\d{4}-\d{2}-\d{2}),[\d\s:.,\-]*$')
     
     # Pattern for JPY stocks - proceeds are INTEGERS (no decimal point)
     # Japanese stocks always end in .T
@@ -224,38 +254,59 @@ def extract_ib_transactions(text: str) -> ExtractionResult:
     
     for i, line in enumerate(lines):
         line = line.strip()
-        
-        # Check for Trades section start
-        if trades_section_pattern.match(line):
-            in_trades_section = True
+        if not line:
             continue
-        
+
+        # Check for Trades section start. A page break repeats the heading mid-section
+        # (keep state); a new account starts a fresh section.
+        if trades_section_pattern.match(line):
+            if not in_trades_section:
+                in_trades_section = True
+                in_stocks = False
+                current_currency = None
+            current_date = None
+            continue
+
         if not in_trades_section:
             continue
-        
+
+        # Check for the end of the Trades section
+        if line in other_sections:
+            in_trades_section = False
+            continue
+
+        # Check for asset-class sub-headers ("Stocks", or "StocksGBP" in some layouts)
+        if line == 'Stocks' or (line.startswith('Stocks') and line[6:] in currencies):
+            in_stocks = True
+            if line[6:] in currencies:
+                current_currency = line[6:]
+            continue
+        if line in non_stock_categories:
+            in_stocks = False
+            continue
+        if not in_stocks:
+            continue
+
         # Check for currency headers
-        for curr in ['AUD', 'CAD', 'GBP', 'JPY', 'USD', 'EUR', 'SEK', 'CHF', 'HKD', 'NOK', 'DKK', 'HUF', 'PLN', 'CZK']:
-            if line == curr or line == f'Stocks{curr}':
-                current_currency = curr
-                break
-        
-        # Check for date line
+        if line in currencies:
+            current_currency = line
+            continue
+
+        # Check for date line; its trade is on the very next line
         date_match = date_pattern.match(line)
         if date_match:
             current_date = date_match.group(1)
             continue
-        
-        # Check for section end markers
-        if any(marker in line.lower() for marker in ['forex', 'equity and index options']):
-            break
-        
+
+        trade_date, current_date = current_date, None
+
         # Skip Total lines
         if line.startswith('Total'):
             continue
-        
+
         # Try JPY pattern first (for Japanese stocks)
         jpy_match = jpy_transaction_pattern.match(line)
-        if jpy_match and current_date:
+        if jpy_match and trade_date:
             symbol, quantity_str, proceeds_str, comm_str = jpy_match.groups()
             
             try:
@@ -267,7 +318,7 @@ def extract_ib_transactions(text: str) -> ExtractionResult:
             trans_type = 'Sell' if quantity < 0 else 'Buy'
             
             transactions.append(Transaction(
-                date=current_date,
+                date=trade_date,
                 broker=Broker.INTERACTIVE_BROKERS.value,
                 stock=symbol,
                 trans_type=trans_type,
@@ -280,7 +331,7 @@ def extract_ib_transactions(text: str) -> ExtractionResult:
         
         # Try regular pattern for non-JPY stocks
         regular_match = regular_transaction_pattern.match(line)
-        if regular_match and current_date:
+        if regular_match and trade_date:
             symbol, quantity_str, proceeds_str, comm_str = regular_match.groups()
             
             # Skip Total lines
@@ -306,11 +357,11 @@ def extract_ib_transactions(text: str) -> ExtractionResult:
                         break
             
             if not trade_currency:
-                warnings.append(f"Could not determine currency for {symbol} on {current_date}, defaulting to USD")
+                warnings.append(f"Could not determine currency for {symbol} on {trade_date}, defaulting to USD")
                 trade_currency = 'USD'
-            
+
             transactions.append(Transaction(
-                date=current_date,
+                date=trade_date,
                 broker=Broker.INTERACTIVE_BROKERS.value,
                 stock=symbol,
                 trans_type=trans_type,
