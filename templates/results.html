@@ -109,7 +109,7 @@
                         <td>${t.broker}</td>
                         <td style="font-weight: 500;">${t.stock}</td>
                         <td><span style="padding: 4px 10px; border-radius: 6px; font-size: 0.85em; font-weight: 500; ${t.type === 'Buy' ? 'background: #d4edda; color: #155724;' : 'background: #f8d7da; color: #721c24;'}">${t.type}</span></td>
-                        <td style="text-align: right;">${formatNumber(t.shares, 0)}</td>
+                        <td style="text-align: right;">${formatNumber(t.shares, Number.isInteger(t.shares) ? 0 : 4)}</td>
                         <td style="text-align: center; font-weight: 500;">${t.currency}</td>
                         <td style="text-align: right;">${formatNumber(t.amount, 2)}</td>
                         <td style="text-align: right;">${t.rate.toFixed(4)}</td>

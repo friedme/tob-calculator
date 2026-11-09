@@ -45,28 +45,10 @@ def format_belgian(num: float, decimals: int = 2) -> str:
     """
     if num is None:
         return ""
-    
-    # Handle negative numbers
-    sign = "-" if num < 0 else ""
-    num = abs(num)
-    
-    if decimals == 0:
-        int_part = int(round(num))
-        formatted = f"{int_part:,}".replace(',', '.')
-    else:
-        int_part = int(num)
-        dec_part = round(num - int_part, decimals)
-        
-        # Format integer with periods as thousands separator
-        int_str = f"{int_part:,}".replace(',', '.')
-        
-        # Format decimal with comma
-        dec_str = f"{dec_part:.{decimals}f}"[1:]  # Get ".XX" part
-        dec_str = dec_str.replace('.', ',')  # Change to ",XX"
-        
-        formatted = int_str + dec_str
-    
-    return sign + formatted
+
+    # Round the whole number, then swap separators (1,234.56 -> 1.234,56). Rounding the
+    # fraction on its own lost the carry: 1234.996 printed as "1.234,00".
+    return f"{num:,.{decimals}f}".replace(',', 'X').replace('.', ',').replace('X', '.')
 
 
 def format_belgian_rate(rate: float) -> str:
@@ -77,6 +59,11 @@ def format_belgian_rate(rate: float) -> str:
 def format_eur(amount: float) -> str:
     """Format as EUR amount: € 1.234,56"""
     return f"€ {format_belgian(amount)}"
+
+
+def share_decimals(shares: float) -> int:
+    """Whole shares print without decimals; fractional cash-in-lieu lines (0,2500) keep 4"""
+    return 0 if float(shares).is_integer() else 4
 
 
 # =============================================================================
@@ -219,7 +206,7 @@ def generate_excel(results: Dict[str, Any], output_path: str) -> str:
             shares = t.get('shares', 0)
             ws.cell(row=current_row, column=5, value=shares)
             ws.cell(row=current_row, column=5).font = number_font
-            ws.cell(row=current_row, column=5).number_format = '#,##0'
+            ws.cell(row=current_row, column=5).number_format = '#,##0' if share_decimals(shares) == 0 else '#,##0.0000'
             ws.cell(row=current_row, column=5).alignment = Alignment(horizontal='right')
             
             # Currency
@@ -375,7 +362,7 @@ def generate_csv(results: Dict[str, Any], output_path: str) -> str:
                 t.get('broker', ''),
                 t.get('stock', ''),
                 t.get('type', ''),
-                format_belgian(t.get('shares', 0), 0),
+                format_belgian(t.get('shares', 0), share_decimals(t.get('shares', 0))),
                 t.get('currency', ''),
                 format_belgian(t.get('amount', 0)),
                 format_belgian_rate(t.get('rate', 1.0)),
@@ -530,7 +517,7 @@ def generate_pdf(results: Dict[str, Any], output_path: str) -> str:
             t.get('broker', '')[:15],  # Truncate for space
             t.get('stock', '')[:12],
             t.get('type', ''),
-            format_belgian(t.get('shares', 0), 0),
+            format_belgian(t.get('shares', 0), share_decimals(t.get('shares', 0))),
             t.get('currency', ''),
             format_belgian(t.get('amount', 0)),
             format_belgian_rate(t.get('rate', 1.0)),

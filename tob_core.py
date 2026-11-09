@@ -46,7 +46,7 @@ class Transaction:
     broker: str
     stock: str
     trans_type: str        # 'Buy' or 'Sell'
-    shares: int
+    shares: float          # whole number, except fractional cash-in-lieu lines (e.g. 0.25)
     currency: str
     amount: float
     original_line: str = ""  # For debugging
@@ -171,6 +171,93 @@ def detect_broker(text: str) -> Broker:
 # =============================================================================
 # INTERACTIVE BROKERS EXTRACTION
 # =============================================================================
+
+# A number on an IBKR trade row: "1,234", "-0.3356", "2,297.633333"
+_IB_NUMBER = re.compile(r'^-?[\d,]*\.?\d+$')
+
+
+def _ib_number(token: str) -> Optional[float]:
+    return float(token.replace(',', '')) if _IB_NUMBER.match(token) else None
+
+
+def _ib_wrapped_prices(date_line: str, time_line: str) -> List[float]:
+    """
+    Numeric fragments that wrapped out of a trade row onto its date and time lines.
+
+    A long average price does not fit its cell and is split around the row:
+        2025-07-02, 304.60893333      <- date line
+        TSLA -300 315.6500 91,382.68 -1.93 ...
+        06:51:57 3                    <- time line
+    Returns the fragments from the date line, alone and joined with the time-line fragments
+    (304.60893333 and 304.608933333).
+    """
+    date_parts = date_line.split(',', 1)[1].split() if ',' in date_line else []
+    time_match = re.match(r'^\d{2}:\d{2}:\d{2}\s*(.*)$', time_line)
+    time_parts = time_match.group(1).split() if time_match else []
+    prices = []
+    for d in date_parts:
+        if _ib_number(d) is None:
+            continue
+        prices.append(_ib_number(d))
+        prices.extend(_ib_number(d + t) for t in time_parts if _ib_number(d + t) is not None)
+    return prices
+
+
+def _parse_ib_trade_line(line: str, wrapped_prices: List[float]) -> Optional[Tuple[str, float, float]]:
+    """
+    Read symbol, quantity and proceeds from one IBKR Trades row.
+
+    Row layout: Symbol Quantity T.Price C.Price Proceeds Comm/Fee Basis ... Code. Positional
+    patterns break on real statements: symbols can contain a space ("BRK B", "PBR A"),
+    quantities can be fractional (cash in lieu: "SIRI -0.25"), and a wrapped average price
+    leaves the row one price short (see _ib_wrapped_prices). So proceeds are found
+    arithmetically: the first value after the quantity, opposite in sign, that equals
+    quantity x a trade price from the row or from the wrapped fragments.
+
+    Returns (symbol, quantity, proceeds), or None if the row cannot be read consistently.
+    A row with zero quantity and all-zero values carries no trade and returns quantity 0.
+    """
+    tokens = line.split()
+
+    # Symbol: first token (can be numeric, e.g. "1810") plus following words ("PBR A")
+    n = 1
+    while n < len(tokens) and _ib_number(tokens[n]) is None and re.search(r'[A-Za-z]', tokens[n]):
+        n += 1
+    symbol = ' '.join(tokens[:n])
+
+    # Numbers up to the trade code ("O;P"); "--" is an empty cell
+    values = []
+    for token in tokens[n:]:
+        if token == '--':
+            values.append(None)
+            continue
+        value = _ib_number(token)
+        if value is None:
+            break
+        values.append(value)
+
+    if len(values) < 3:
+        return None
+    quantity = values[0]
+    if not quantity:
+        # "DFDS 0 0.0000 214.2000 0.00 0.00 ..." (zero T.Price, everything after C.Price zero)
+        # carries no trade; any other zero-quantity row is unreadable
+        if not values[1] and not any(values[3:]):
+            return symbol, 0.0, 0.0
+        return None
+
+    for k in range(1, len(values)):
+        proceeds = values[k]
+        if not proceeds or (proceeds > 0) == (quantity > 0):
+            continue
+        prices = [v for v in values[1:k] if v] + wrapped_prices
+        # Prices are shown to at least 4 decimals; proceeds are rounded to the cent (yen for JPY)
+        tolerance = abs(quantity) * 0.0001 + (0.51 if proceeds == int(proceeds) else 0.011)
+        if any(abs(abs(proceeds) - abs(quantity) * price) <= tolerance for price in prices):
+            return symbol, quantity, proceeds
+    return None
+
+
 def extract_ib_transactions(text: str) -> ExtractionResult:
     """
     Extract transactions from Interactive Brokers statement
@@ -181,9 +268,9 @@ def extract_ib_transactions(text: str) -> ExtractionResult:
     Line 3: 18:00:07
     
     CRITICAL:
-    - JPY stocks have INTEGER proceeds (no decimals)
-    - Other currencies have DECIMAL proceeds
-    - Symbols can be mixed case (e.g., ZEGl)
+    - Rows are read by _parse_ib_trade_line: symbols can be mixed case or contain a space
+      (ZEGl, PBR A), quantities can be fractional, and a long average price can wrap out of
+      the row onto the date/time lines. JPY proceeds are whole yen.
     - A multi-account statement repeats the whole statement per account, so there is one
       Trades section per account, each preceded by summary tables whose rows look like trades
     """
@@ -196,6 +283,7 @@ def extract_ib_transactions(text: str) -> ExtractionResult:
     in_trades_section = False
     in_stocks = False
     current_date = None
+    date_line = ''
 
     # Pattern to detect Trades section start
     trades_section_pattern = re.compile(r'^Trades\s*$', re.IGNORECASE)
@@ -223,35 +311,16 @@ def extract_ib_transactions(text: str) -> ExtractionResult:
         'Warrants', 'CFDs', 'Treasury Bills', 'Crypto',
     }
 
-    currencies = ['AUD', 'CAD', 'GBP', 'JPY', 'USD', 'EUR', 'SEK', 'CHF', 'HKD', 'NOK', 'DKK', 'HUF', 'PLN', 'CZK']
+    # Currency sub-header inside Trades > Stocks ("GBP", "SGD", ...). Any 3-letter code counts,
+    # so a currency without an ECB rate fails loudly instead of inheriting the previous
+    # block's currency and being converted at the wrong rate.
+    currency_pattern = re.compile(r'^[A-Z]{3}$')
 
     # Pattern for date line: "2025-11-26," optionally followed by the time or by numeric
     # fragments of a wrapped price cell ("2026-06-23, 2,297.633333"), but never by words
     # (fee lines like "2026-09-17, 05:28:44 AUTOl UK Stamp Tax ..." are not trade dates)
     date_pattern = re.compile(r'^(\d{4}-\d{2}-\d{2}),[\d\s:.,\-]*$')
-    
-    # Pattern for JPY stocks - proceeds are INTEGERS (no decimal point)
-    # Japanese stocks always end in .T
-    jpy_transaction_pattern = re.compile(
-        r'^(\d+\.T)\s+'                  # Symbol (JPY stocks end in .T)
-        r'(-?[\d,]+)\s+'                 # Quantity
-        r'[\d,.]+\s+'                    # T.Price
-        r'(?:[\d,.]+\s+)?'               # Optional C.Price
-        r'(-?[\d,]+)\s+'                 # Proceeds (INTEGER - no decimal!)
-        r'(-?[\d,.]+)'                   # Comm/Fee (has decimal)
-    )
-    
-    # Pattern for non-JPY stocks - proceeds HAVE decimals
-    # FIXED: Allow mixed case symbols (e.g., ZEGl)
-    regular_transaction_pattern = re.compile(
-        r'^([A-Za-z0-9.]+)\s+'           # Symbol - MIXED CASE!
-        r'(-?[\d,]+)\s+'                 # Quantity
-        r'[\d,.]+\s+'                    # T.Price
-        r'(?:[\d,.]+|--)\s+'             # C.Price
-        r'(-?[\d,]+\.\d+)\s+'            # Proceeds (HAS decimal point!)
-        r'(-?[\d,.]+)'                   # Comm/Fee
-    )
-    
+
     for i, line in enumerate(lines):
         line = line.strip()
         if not line:
@@ -276,9 +345,9 @@ def extract_ib_transactions(text: str) -> ExtractionResult:
             continue
 
         # Check for asset-class sub-headers ("Stocks", or "StocksGBP" in some layouts)
-        if line == 'Stocks' or (line.startswith('Stocks') and line[6:] in currencies):
+        if line == 'Stocks' or (line.startswith('Stocks') and currency_pattern.match(line[6:])):
             in_stocks = True
-            if line[6:] in currencies:
+            if currency_pattern.match(line[6:]):
                 current_currency = line[6:]
             continue
         if line in non_stock_categories:
@@ -288,7 +357,7 @@ def extract_ib_transactions(text: str) -> ExtractionResult:
             continue
 
         # Check for currency headers
-        if line in currencies:
+        if currency_pattern.match(line):
             current_currency = line
             continue
 
@@ -296,56 +365,32 @@ def extract_ib_transactions(text: str) -> ExtractionResult:
         date_match = date_pattern.match(line)
         if date_match:
             current_date = date_match.group(1)
+            date_line = line
             continue
 
         trade_date, current_date = current_date, None
 
         # Skip Total lines
-        if line.startswith('Total'):
+        if line.startswith('Total') or not trade_date:
             continue
 
-        # Try JPY pattern first (for Japanese stocks)
-        jpy_match = jpy_transaction_pattern.match(line)
-        if jpy_match and trade_date:
-            symbol, quantity_str, proceeds_str, comm_str = jpy_match.groups()
-            
-            try:
-                quantity = int(quantity_str.replace(',', ''))
-                proceeds = abs(float(proceeds_str.replace(',', '')))
-            except ValueError:
-                continue
-            
-            trans_type = 'Sell' if quantity < 0 else 'Buy'
-            
-            transactions.append(Transaction(
-                date=trade_date,
-                broker=Broker.INTERACTIVE_BROKERS.value,
-                stock=symbol,
-                trans_type=trans_type,
-                shares=abs(quantity),
-                currency='JPY',  # Japanese stocks are always JPY
-                amount=proceeds,
-                original_line=line
-            ))
+        time_line = lines[i + 1].strip() if i + 1 < len(lines) else ''
+        parsed = _parse_ib_trade_line(line, _ib_wrapped_prices(date_line, time_line))
+        if parsed is None:
+            warnings.append(f"Could not read IBKR trade on {trade_date}, not included: {line}")
             continue
-        
-        # Try regular pattern for non-JPY stocks
-        regular_match = regular_transaction_pattern.match(line)
-        if regular_match and trade_date:
-            symbol, quantity_str, proceeds_str, comm_str = regular_match.groups()
-            
-            # Skip Total lines
-            if 'Total' in symbol:
-                continue
-            
-            try:
-                quantity = int(quantity_str.replace(',', ''))
-                proceeds = abs(float(proceeds_str.replace(',', '')))
-            except ValueError:
-                continue
-            
-            trans_type = 'Sell' if quantity < 0 else 'Buy'
-            
+        symbol, quantity, proceeds = parsed
+        if not quantity:
+            continue
+
+        trans_type = 'Sell' if quantity < 0 else 'Buy'
+        shares = abs(quantity)
+        if shares == int(shares):
+            shares = int(shares)
+
+        if symbol.endswith('.T'):
+            trade_currency = 'JPY'  # Japanese stocks are always JPY
+        else:
             # Determine currency
             trade_currency = current_currency
             if not trade_currency:
@@ -355,22 +400,22 @@ def extract_ib_transactions(text: str) -> ExtractionResult:
                     if curr in context:
                         trade_currency = curr
                         break
-            
+
             if not trade_currency:
                 warnings.append(f"Could not determine currency for {symbol} on {trade_date}, defaulting to USD")
                 trade_currency = 'USD'
 
-            transactions.append(Transaction(
-                date=trade_date,
-                broker=Broker.INTERACTIVE_BROKERS.value,
-                stock=symbol,
-                trans_type=trans_type,
-                shares=abs(quantity),
-                currency=trade_currency,
-                amount=proceeds,
-                original_line=line
-            ))
-    
+        transactions.append(Transaction(
+            date=trade_date,
+            broker=Broker.INTERACTIVE_BROKERS.value,
+            stock=symbol,
+            trans_type=trans_type,
+            shares=shares,
+            currency=trade_currency,
+            amount=abs(proceeds),
+            original_line=line
+        ))
+
     # Alternative extraction if pattern-based didn't work well
     if not transactions:
         transactions, alt_warnings = _extract_ib_alternative(text)
